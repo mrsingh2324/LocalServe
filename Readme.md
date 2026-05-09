@@ -82,26 +82,28 @@ GitHub Actions workflow: `.github/workflows/ci-cd.yml`.
 
 On pull requests and pushes to `main`, CI installs dependencies, typechecks the workspaces, runs the API tests, and builds both the API and web app.
 
-On pushes to `main`, the API is containerized with `apps/api/Dockerfile`, pushed to Google Artifact Registry, and deployed to Google Cloud Run.
+On pushes to `main`, the API is containerized with `apps/api/Dockerfile`, pushed to Docker Hub, and deployed to Google Cloud Run.
 
 Required GitHub repository secrets:
 
 - `GCP_PROJECT_ID`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT`
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
 - `MONGODB_URI`
 - `JWT_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
 
 The workflow syncs the runtime secrets into Google Secret Manager before deploying Cloud Run.
 
-The GitHub Actions service account needs permission to push Artifact Registry images, create/update Secret Manager secrets, and deploy Cloud Run services.
+The GitHub Actions service account needs permission to create/update Secret Manager secrets and deploy Cloud Run services.
 
 Recommended GitHub repository variables:
 
 - `GCP_REGION`, defaults to `asia-south1`
-- `GAR_REPOSITORY`, defaults to `localserve`
 - `CLOUD_RUN_SERVICE`, defaults to `localserve-api`
+- `DOCKER_IMAGE`, defaults to `mrsingh2324/localserve-api`
 - `PUBLIC_APP_URL`, for example the Vercel production URL
 - `CORS_ORIGIN`, for example the same Vercel production URL
 
