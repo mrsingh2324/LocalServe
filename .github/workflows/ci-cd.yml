@@ -1,0 +1,141 @@
+name: LocalServe CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20"
+  GCP_REGION: ${{ vars.GCP_REGION || 'asia-south1' }}
+  GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY || 'localserve' }}
+  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'localserve-api' }}
+  API_IMAGE_NAME: localserve-api
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck workspaces
+        run: npm run typecheck
+
+      - name: Test API
+        run: npm run test --workspace @localserve/api
+
+      - name: Build API and web
+        run: npm run build
+
+  deploy-api-cloud-run:
+    name: Deploy API to Cloud Run
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure Artifact Registry repository exists
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if ! gcloud artifacts repositories describe "${GAR_REPOSITORY}" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${GCP_REGION}" >/dev/null 2>&1; then
+            gcloud artifacts repositories create "${GAR_REPOSITORY}" \
+              --project="${GCP_PROJECT_ID}" \
+              --location="${GCP_REGION}" \
+              --repository-format=docker \
+              --description="LocalServe Docker images"
+          fi
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push API image
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${API_IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -f apps/api/Dockerfile -t "${IMAGE_URI}" .
+          docker push "${IMAGE_URI}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> "${GITHUB_ENV}"
+
+      - name: Sync runtime secrets to Secret Manager
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+        run: |
+          sync_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "${value}" ]; then
+              echo "Missing value for ${name}" >&2
+              exit 1
+            fi
+            if gcloud secrets describe "${name}" --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              printf "%s" "${value}" | gcloud secrets versions add "${name}" --project="${GCP_PROJECT_ID}" --data-file=-
+            else
+              printf "%s" "${value}" | gcloud secrets create "${name}" --project="${GCP_PROJECT_ID}" --replication-policy=automatic --data-file=-
+            fi
+          }
+
+          sync_secret "MONGODB_URI" "${MONGODB_URI}"
+          sync_secret "JWT_SECRET" "${JWT_SECRET}"
+          sync_secret "RAZORPAY_WEBHOOK_SECRET" "${RAZORPAY_WEBHOOK_SECRET}"
+
+      - name: Deploy Cloud Run service
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+        run: |
+          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --image="${IMAGE_URI}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=4000 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --memory=512Mi \
+            --cpu=1 \
+            --set-env-vars="NODE_ENV=production,USE_MONGO=true,PUBLIC_APP_URL=${PUBLIC_APP_URL},CORS_ORIGIN=${CORS_ORIGIN}" \
+            --set-secrets="MONGODB_URI=MONGODB_URI:latest,JWT_SECRET=JWT_SECRET:latest,RAZORPAY_WEBHOOK_SECRET=RAZORPAY_WEBHOOK_SECRET:latest"
+
+      - name: Show deployed URL
+        run: |
+          gcloud run services describe "${CLOUD_RUN_SERVICE}" \
+            --region="${GCP_REGION}" \
+            --format='value(status.url)'

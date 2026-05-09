@@ -1,0 +1,6 @@
+{
+  "buildCommand": "npm run build --workspace @localserve/web",
+  "installCommand": "npm ci",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite"
+}

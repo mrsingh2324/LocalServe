@@ -1,0 +1,31 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: localserve-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: localserve
+      MONGO_INITDB_ROOT_PASSWORD: localserve
+      MONGO_INITDB_DATABASE: localserve
+    ports:
+      - "27017:27017"
+    volumes:
+      - localserve-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: localserve-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  localserve-mongo:

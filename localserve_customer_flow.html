@@ -1,0 +1,453 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.section-label{font-size:11px;font-weight:500;letter-spacing:.08em;color:var(--color-text-secondary);text-transform:uppercase;margin:2rem 0 .75rem;padding:0 4px}
+.flow-row{display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:4px}
+.phone{width:140px;flex-shrink:0;background:var(--color-background-primary);border:1.5px solid var(--color-border-secondary);border-radius:18px;overflow:hidden;position:relative}
+.phone-notch{height:18px;background:var(--color-background-secondary);display:flex;align-items:center;justify-content:center}
+.notch-dot{width:32px;height:5px;background:var(--color-border-secondary);border-radius:3px}
+.phone-screen{padding:10px 9px 12px}
+.arrow{display:flex;align-items:center;color:var(--color-text-secondary);font-size:18px;flex-shrink:0;align-self:center;padding-top:10px}
+.screen-tag{font-size:9px;font-weight:500;color:var(--color-text-secondary);text-align:center;margin-top:6px;letter-spacing:.04em}
+
+.bar{height:5px;background:var(--color-background-secondary);border-radius:3px;margin-bottom:6px}
+.bar.w60{width:60%}.bar.w80{width:80%}.bar.w40{width:40%}.bar.w90{width:90%}.bar.w50{width:50%}.bar.w70{width:70%}.bar.w30{width:30%}
+.blue-bar{background:#B5D4F4}.teal-bar{background:#9FE1CB}.purple-bar{background:#CECBF6}
+
+.shop-header{background:#3C3489;border-radius:6px;padding:7px 8px;margin-bottom:7px}
+.shop-name{font-size:11px;font-weight:500;color:#E6E4FC}
+.shop-sub{font-size:9px;color:#AFA9EC;margin-top:2px}
+
+.item-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:.5px solid var(--color-border-tertiary)}
+.item-info .item-name{font-size:9px;font-weight:500;color:var(--color-text-primary)}
+.item-info .item-price{font-size:9px;color:var(--color-text-secondary);margin-top:1px}
+.add-btn{width:18px;height:18px;background:#3C3489;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#E6E4FC;flex-shrink:0}
+
+.cart-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0}
+.cart-item{font-size:9px;color:var(--color-text-primary)}
+.cart-price{font-size:9px;color:var(--color-text-secondary)}
+.total-row{display:flex;justify-content:space-between;padding:5px 0;border-top:.5px solid var(--color-border-tertiary);margin-top:3px}
+.total-label{font-size:9px;font-weight:500;color:var(--color-text-primary)}
+.total-amt{font-size:10px;font-weight:500;color:#3C3489}
+.pay-btn{background:#3C3489;color:#E6E4FC;font-size:9px;font-weight:500;border-radius:5px;padding:5px 0;text-align:center;margin-top:7px}
+
+.upi-box{background:var(--color-background-secondary);border-radius:6px;padding:6px 7px;margin-bottom:6px}
+.upi-label{font-size:8px;color:var(--color-text-secondary)}
+.upi-id{font-size:9px;font-weight:500;color:var(--color-text-primary);margin-top:1px}
+.upi-opts{display:flex;gap:4px;margin-top:6px}
+.upi-opt{flex:1;background:#B5D4F4;border-radius:4px;font-size:8px;font-weight:500;color:#0C447C;text-align:center;padding:3px 0}
+.pay-confirm{background:#185FA5;color:#E6F1FB;font-size:9px;font-weight:500;border-radius:5px;padding:5px 0;text-align:center;margin-top:7px}
+
+.confirm-icon{width:32px;height:32px;background:#EAF3DE;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 6px}
+.confirm-icon svg{width:16px;height:16px}
+.order-code{background:#F1EFE8;border-radius:5px;padding:5px 7px;text-align:center;margin-top:6px}
+.code-label{font-size:8px;color:var(--color-text-secondary)}
+.code-val{font-size:16px;font-weight:500;color:#3C3489;letter-spacing:2px;margin-top:1px}
+
+.status-chip{display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:500;padding:2px 6px;border-radius:10px}
+.status-prep{background:#FAEEDA;color:#633806}
+.status-ready{background:#EAF3DE;color:#27500A}
+.status-pill{display:flex;align-items:center;gap:4px;margin-bottom:5px}
+.timeline{padding:5px 0}
+.tl-row{display:flex;align-items:flex-start;gap:6px;margin-bottom:5px}
+.tl-dot{width:7px;height:7px;border-radius:50%;margin-top:1px;flex-shrink:0}
+.tl-dot.done{background:#1D9E75}.tl-dot.active{background:#3C3489}.tl-dot.pending{background:var(--color-border-secondary)}
+.tl-text{font-size:8px;color:var(--color-text-secondary)}
+.tl-text.done-t{color:var(--color-text-primary)}
+
+.notif-box{background:var(--color-background-secondary);border-radius:6px;padding:6px 7px}
+.notif-from{font-size:8px;color:var(--color-text-secondary);margin-bottom:2px}
+.notif-title{font-size:9px;font-weight:500;color:var(--color-text-primary)}
+.notif-body{font-size:8px;color:var(--color-text-secondary);margin-top:2px;line-height:1.4}
+
+.qr-box{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 0}
+.qr-svg{opacity:.7}
+.qr-hint{font-size:8px;color:var(--color-text-secondary);margin-top:5px;text-align:center}
+
+.vendor-header{background:#085041;border-radius:6px;padding:7px 8px;margin-bottom:7px}
+.vendor-title{font-size:10px;font-weight:500;color:#E1F5EE}
+.vendor-sub{font-size:8px;color:#9FE1CB;margin-top:1px}
+.badge{display:inline-block;background:#FAEEDA;color:#633806;font-size:8px;font-weight:500;padding:1px 6px;border-radius:8px}
+.badge.new{background:#FAEEDA;color:#633806}.badge.prep{background:#E6F1FB;color:#0C447C}
+.order-card{background:var(--color-background-secondary);border-radius:6px;padding:6px 7px;margin-bottom:5px;border-left:3px solid #1D9E75}
+.order-card.new-ord{border-left-color:#BA7517}
+.oc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.oc-code{font-size:10px;font-weight:500;color:var(--color-text-primary)}
+.oc-items{font-size:8px;color:var(--color-text-secondary);line-height:1.4;margin-bottom:4px}
+.mark-btn{background:#085041;color:#E1F5EE;font-size:8px;font-weight:500;border-radius:4px;padding:3px 7px;text-align:center}
+.mark-btn.done-btn{background:#F1EFE8;color:#3B6D11}
+
+.menu-item-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:.5px solid var(--color-border-tertiary)}
+.mi-info .mi-name{font-size:9px;font-weight:500;color:var(--color-text-primary)}
+.mi-info .mi-p{font-size:8px;color:var(--color-text-secondary)}
+.toggle{width:22px;height:12px;background:#1D9E75;border-radius:6px;position:relative}
+.toggle-dot{width:8px;height:8px;background:white;border-radius:50%;position:absolute;right:2px;top:2px}
+.toggle.off{background:var(--color-border-secondary)}
+.toggle.off .toggle-dot{right:auto;left:2px}
+
+.divider{height:.5px;background:var(--color-border-tertiary);margin:1.5rem 0}
+.flow-title{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:.5rem}
+</style>
+
+<h2 class="sr-only">LocalServe app flow — customer ordering journey and vendor management journey across mobile screens</h2>
+
+<div style="padding:1rem 0">
+
+<div class="flow-title">Customer journey</div>
+<div class="section-label">Step 1 — QR scan &nbsp;→&nbsp; Step 2 — Browse menu &nbsp;→&nbsp; Step 3 — Cart &nbsp;→&nbsp; Step 4 — Payment &nbsp;→&nbsp; Step 5 — Confirmation &nbsp;→&nbsp; Step 6 — Tracking &nbsp;→&nbsp; Step 7 — Notification</div>
+
+<div class="flow-row">
+
+  <!-- S1: QR Scan -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div class="qr-box">
+          <svg class="qr-svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+            <rect x="4" y="4" width="24" height="24" rx="2" stroke="var(--color-text-secondary)" stroke-width="2" fill="none"/>
+            <rect x="10" y="10" width="12" height="12" rx="1" fill="var(--color-text-secondary)"/>
+            <rect x="36" y="4" width="24" height="24" rx="2" stroke="var(--color-text-secondary)" stroke-width="2" fill="none"/>
+            <rect x="42" y="10" width="12" height="12" rx="1" fill="var(--color-text-secondary)"/>
+            <rect x="4" y="36" width="24" height="24" rx="2" stroke="var(--color-text-secondary)" stroke-width="2" fill="none"/>
+            <rect x="10" y="42" width="12" height="12" rx="1" fill="var(--color-text-secondary)"/>
+            <rect x="36" y="36" width="6" height="6" fill="var(--color-text-secondary)"/><rect x="44" y="36" width="6" height="6" fill="var(--color-text-secondary)"/><rect x="52" y="36" width="8" height="6" fill="var(--color-text-secondary)"/>
+            <rect x="36" y="44" width="8" height="6" fill="var(--color-text-secondary)"/><rect x="50" y="44" width="10" height="6" fill="var(--color-text-secondary)"/>
+            <rect x="36" y="52" width="6" height="8" fill="var(--color-text-secondary)"/><rect x="46" y="52" width="6" height="8" fill="var(--color-text-secondary)"/><rect x="56" y="52" width="4" height="8" fill="var(--color-text-secondary)"/>
+          </svg>
+          <div class="qr-hint">Scan QR at the stall</div>
+          <div style="font-size:8px;color:var(--color-text-secondary);margin-top:2px;text-align:center">Opens in browser — no install</div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">Scan QR</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S2: Menu -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div class="shop-header">
+          <div class="shop-name">Ravi's Canteen</div>
+          <div class="shop-sub">Office Block B, Ground Floor</div>
+        </div>
+        <div style="font-size:8px;font-weight:500;color:var(--color-text-secondary);margin-bottom:4px">Menu</div>
+        <div class="item-row">
+          <div class="item-info"><div class="item-name">Veg Sandwich</div><div class="item-price">₹45</div></div>
+          <div class="add-btn">+</div>
+        </div>
+        <div class="item-row">
+          <div class="item-info"><div class="item-name">Paneer Roll</div><div class="item-price">₹60</div></div>
+          <div class="add-btn">+</div>
+        </div>
+        <div class="item-row" style="border-bottom:none">
+          <div class="item-info"><div class="item-name">Chicken Burger</div><div class="item-price">₹90</div></div>
+          <div class="add-btn">+</div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">Browse menu</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S3: Cart -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">Your order</div>
+        <div class="cart-row"><span class="cart-item">Paneer Roll ×1</span><span class="cart-price">₹60</span></div>
+        <div class="cart-row"><span class="cart-item">Veg Sandwich ×2</span><span class="cart-price">₹90</span></div>
+        <div class="total-row">
+          <span class="total-label">Total</span>
+          <span class="total-amt">₹150</span>
+        </div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin:6px 0 3px">Your email for notification</div>
+        <div style="background:var(--color-background-secondary);border-radius:4px;padding:4px 6px;font-size:8px;color:var(--color-text-secondary)">priya@company.in</div>
+        <div class="pay-btn">Proceed to pay →</div>
+      </div>
+    </div>
+    <div class="screen-tag">Cart review</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S4: Payment -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">Payment</div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:4px">Amount due</div>
+        <div style="font-size:18px;font-weight:500;color:#3C3489;margin-bottom:8px">₹150</div>
+        <div class="upi-box">
+          <div class="upi-label">Pay via UPI</div>
+          <div class="upi-id">priya@okhdfcbank</div>
+        </div>
+        <div class="upi-opts">
+          <div class="upi-opt">GPay</div>
+          <div class="upi-opt">PhonePe</div>
+          <div class="upi-opt">Paytm</div>
+        </div>
+        <div class="pay-confirm">Pay ₹150</div>
+      </div>
+    </div>
+    <div class="screen-tag">UPI payment</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S5: Confirmation -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div class="confirm-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#27500A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);text-align:center">Order placed!</div>
+        <div style="font-size:8px;color:var(--color-text-secondary);text-align:center;margin-top:2px">Payment confirmed</div>
+        <div class="order-code">
+          <div class="code-label">Your order code</div>
+          <div class="code-val">AX48</div>
+        </div>
+        <div style="font-size:8px;color:var(--color-text-secondary);text-align:center;margin-top:7px;line-height:1.4">Confirmation sent to<br>priya@company.in</div>
+      </div>
+    </div>
+    <div class="screen-tag">Confirmed</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S6: Tracking -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+          <div style="font-size:10px;font-weight:500;color:var(--color-text-primary)">Order #AX48</div>
+          <span class="status-chip status-prep">Preparing</span>
+        </div>
+        <div class="timeline">
+          <div class="tl-row"><div class="tl-dot done"></div><div class="tl-text done-t">Order received <span style="color:var(--color-text-secondary)">10:22</span></div></div>
+          <div class="tl-row"><div class="tl-dot active"></div><div class="tl-text done-t">Preparing now</div></div>
+          <div class="tl-row"><div class="tl-dot pending"></div><div class="tl-text">Ready for pickup</div></div>
+        </div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-top:6px;background:var(--color-background-secondary);border-radius:5px;padding:5px 6px;line-height:1.4">You'll get an email when your order is ready</div>
+      </div>
+    </div>
+    <div class="screen-tag">Live status</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- S7: Notification -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:9px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;text-align:center">📬 Email notification</div>
+        <div class="notif-box">
+          <div class="notif-from">LocalServe &lt;orders@localserve.app&gt;</div>
+          <div class="notif-title">🎉 Order #AX48 is ready!</div>
+          <div class="notif-body">Your order from Ravi's Canteen is ready for pickup. Show code <strong>AX48</strong> at the counter.</div>
+        </div>
+        <div style="margin-top:8px;background:var(--color-background-secondary);border-radius:5px;padding:6px 7px;text-align:center">
+          <div style="font-size:8px;color:var(--color-text-secondary)">Status update</div>
+          <span class="status-chip status-ready" style="margin-top:3px;display:inline-flex">✓ Ready for pickup</span>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">Notification</div>
+  </div>
+
+</div>
+
+<div class="divider"></div>
+
+<div class="flow-title">Vendor journey</div>
+<div class="section-label">Step 1 — Onboarding &nbsp;→&nbsp; Step 2 — Menu setup &nbsp;→&nbsp; Step 3 — QR code &nbsp;→&nbsp; Step 4 — New order alert &nbsp;→&nbsp; Step 5 — Order queue &nbsp;→&nbsp; Step 6 — Mark complete &nbsp;→&nbsp; Step 7 — Dashboard</div>
+
+<div class="flow-row">
+
+  <!-- V1: Onboarding -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div class="vendor-header">
+          <div class="vendor-title">LocalServe Vendor</div>
+          <div class="vendor-sub">Set up your stall</div>
+        </div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:3px">Shop name</div>
+        <div style="background:var(--color-background-secondary);border-radius:4px;padding:4px 6px;font-size:9px;color:var(--color-text-primary);margin-bottom:5px">Ravi's Canteen</div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:3px">Mobile number</div>
+        <div style="background:var(--color-background-secondary);border-radius:4px;padding:4px 6px;font-size:9px;color:var(--color-text-primary);margin-bottom:5px">+91 9876543210</div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:3px">UPI ID</div>
+        <div style="background:var(--color-background-secondary);border-radius:4px;padding:4px 6px;font-size:9px;color:var(--color-text-primary);margin-bottom:7px">ravi@upi</div>
+        <div style="background:#085041;color:#E1F5EE;font-size:9px;font-weight:500;border-radius:5px;padding:5px 0;text-align:center">Register stall →</div>
+      </div>
+    </div>
+    <div class="screen-tag">Onboarding</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V2: Menu setup -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">My menu</div>
+        <div class="menu-item-row">
+          <div class="mi-info"><div class="mi-name">Veg Sandwich</div><div class="mi-p">₹45</div></div>
+          <div class="toggle"><div class="toggle-dot"></div></div>
+        </div>
+        <div class="menu-item-row">
+          <div class="mi-info"><div class="mi-name">Paneer Roll</div><div class="mi-p">₹60</div></div>
+          <div class="toggle"><div class="toggle-dot"></div></div>
+        </div>
+        <div class="menu-item-row" style="border-bottom:none">
+          <div class="mi-info"><div class="mi-name">Chicken Burger</div><div class="mi-p">₹90</div></div>
+          <div class="toggle off"><div class="toggle-dot"></div></div>
+        </div>
+        <div style="background:#E1F5EE;color:#085041;font-size:8px;font-weight:500;border-radius:4px;padding:4px 7px;text-align:center;margin-top:8px">+ Add new item</div>
+      </div>
+    </div>
+    <div class="screen-tag">Menu setup</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V3: QR Code -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px">Your stall QR</div>
+        <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:6px">Print & place on table</div>
+        <div style="background:white;border-radius:6px;padding:8px;border:.5px solid var(--color-border-tertiary);display:flex;flex-direction:column;align-items:center">
+          <svg class="qr-svg" width="72" height="72" viewBox="0 0 64 64" fill="none">
+            <rect x="4" y="4" width="24" height="24" rx="2" stroke="#3C3489" stroke-width="2" fill="none"/>
+            <rect x="10" y="10" width="12" height="12" rx="1" fill="#3C3489"/>
+            <rect x="36" y="4" width="24" height="24" rx="2" stroke="#3C3489" stroke-width="2" fill="none"/>
+            <rect x="42" y="10" width="12" height="12" rx="1" fill="#3C3489"/>
+            <rect x="4" y="36" width="24" height="24" rx="2" stroke="#3C3489" stroke-width="2" fill="none"/>
+            <rect x="10" y="42" width="12" height="12" rx="1" fill="#3C3489"/>
+            <rect x="36" y="36" width="6" height="6" fill="#3C3489"/><rect x="44" y="36" width="6" height="6" fill="#3C3489"/><rect x="52" y="36" width="8" height="6" fill="#3C3489"/>
+            <rect x="36" y="44" width="8" height="6" fill="#3C3489"/><rect x="50" y="44" width="10" height="6" fill="#3C3489"/>
+            <rect x="36" y="52" width="6" height="8" fill="#3C3489"/><rect x="46" y="52" width="6" height="8" fill="#3C3489"/><rect x="56" y="52" width="4" height="8" fill="#3C3489"/>
+          </svg>
+          <div style="font-size:8px;color:#3C3489;margin-top:4px;font-weight:500">localserve.app/v/ravi</div>
+        </div>
+        <div style="background:#9FE1CB;color:#085041;font-size:8px;font-weight:500;border-radius:4px;padding:4px 7px;text-align:center;margin-top:7px">⬇ Download PNG</div>
+      </div>
+    </div>
+    <div class="screen-tag">QR code</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V4: New order alert -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="background:#FAEEDA;border-radius:6px;padding:6px 7px;margin-bottom:7px;border-left:3px solid #BA7517">
+          <div style="font-size:9px;font-weight:500;color:#412402">🔔 New order!</div>
+          <div style="font-size:8px;color:#633806;margin-top:1px">Order #AX48 — ₹150</div>
+        </div>
+        <div class="order-card new-ord">
+          <div class="oc-top">
+            <span class="oc-code">#AX48</span>
+            <span class="badge new">New</span>
+          </div>
+          <div class="oc-items">Paneer Roll ×1<br>Veg Sandwich ×2</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:9px;font-weight:500;color:#3C3489">₹150</span>
+            <div class="mark-btn">Start preparing</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">New order alert</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V5: Order queue -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">Live queue</div>
+        <div class="order-card new-ord">
+          <div class="oc-top"><span class="oc-code">#AX48</span><span class="badge prep">Preparing</span></div>
+          <div class="oc-items">Paneer Roll ×1, Veg Sandwich ×2</div>
+          <div class="mark-btn" style="text-align:center">Mark as ready ✓</div>
+        </div>
+        <div class="order-card">
+          <div class="oc-top"><span class="oc-code">#BM19</span><span class="badge new">New</span></div>
+          <div class="oc-items">Chicken Burger ×1</div>
+          <div class="mark-btn">Start preparing</div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">Order queue</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V6: Mark complete -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">Order #AX48</div>
+        <div style="background:var(--color-background-secondary);border-radius:6px;padding:6px 7px;margin-bottom:6px">
+          <div style="font-size:8px;color:var(--color-text-secondary);margin-bottom:3px">Items</div>
+          <div style="font-size:9px;color:var(--color-text-primary);line-height:1.6">Paneer Roll ×1<br>Veg Sandwich ×2</div>
+        </div>
+        <div style="background:#EAF3DE;border-radius:6px;padding:7px;text-align:center">
+          <div style="font-size:9px;font-weight:500;color:#27500A;margin-bottom:4px">Order complete?</div>
+          <div style="background:#1D9E75;color:white;font-size:9px;font-weight:500;border-radius:5px;padding:5px 0">✓ Mark as ready</div>
+          <div style="font-size:8px;color:#3B6D11;margin-top:4px">Customer will be notified</div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-tag">Mark complete</div>
+  </div>
+
+  <div class="arrow">›</div>
+
+  <!-- V7: Dashboard -->
+  <div>
+    <div class="phone">
+      <div class="phone-notch"><div class="notch-dot"></div></div>
+      <div class="phone-screen">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-primary);margin-bottom:7px">Today's summary</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:7px">
+          <div style="background:var(--color-background-secondary);border-radius:6px;padding:6px;text-align:center">
+            <div style="font-size:8px;color:var(--color-text-secondary)">Orders</div>
+            <div style="font-size:16px;font-weight:500;color:var(--color-text-primary)">14</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border-radius:6px;padding:6px;text-align:center">
+            <div style="font-size:8px;color:var(--color-text-secondary)">Revenue</div>
+            <div style="font-size:14px;font-weight:500;color:#0F6E56">₹1,840</div>
+          </div>
+        </div>
+        <div style="font-size:8px;font-weight:500;color:var(--color-text-secondary);margin-bottom:4px">Recent orders</div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:.5px solid var(--color-border-tertiary)"><span style="font-size:8px;color:var(--color-text-primary)">#AX48</span><span class="status-chip status-ready" style="font-size:7px">Ready</span></div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:8px;color:var(--color-text-primary)">#BM19</span><span class="status-chip status-prep" style="font-size:7px">Preparing</span></div>
+      </div>
+    </div>
+    <div class="screen-tag">Dashboard</div>
+  </div>
+
+</div>
+</div>

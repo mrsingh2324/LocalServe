@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+**/node_modules
+dist
+**/dist
+.env
+.env.*
+!*.env.example
+apps/api/data
+*.docx
+*.log
+.DS_Store

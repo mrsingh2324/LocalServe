@@ -1,0 +1,9 @@
+{
+  "name": "LocalServe",
+  "short_name": "LocalServe",
+  "start_url": "/v/ravi-canteen",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#3c3489",
+  "description": "QR ordering for hyperlocal food vendors."
+}
