@@ -89,25 +89,28 @@ Required GitHub repository secrets:
 - `GCP_PROJECT_ID`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT`
-- `DOCKER_USERNAME` or `DOCKERHUB_USERNAME`
-- `DOCKER_PASSWORD` or `DOCKERHUB_TOKEN`
+- `GCP_REGION`
+- `CLOUD_RUN_SERVICE`
+- `DOCKER_IMAGE`
+- `DOCKER_USERNAME`
+- `DOCKER_PASSWORD`
+- `PUBLIC_APP_URL`
+- `CORS_ORIGIN`
 - `MONGODB_URI`
 - `JWT_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
 
 The workflow syncs the runtime secrets into Google Secret Manager before deploying Cloud Run.
 
-The GitHub Actions service account needs permission to create/update Secret Manager secrets and deploy Cloud Run services.
+Recommended values:
 
-Recommended GitHub repository variables:
-
-- `GCP_REGION`, defaults to `asia-south1`
-- `CLOUD_RUN_SERVICE`, defaults to `localserve-api`
-- `DOCKER_IMAGE`, defaults to `mrsingh2324/localserve-api`
+- `GCP_REGION`: `asia-south1`
+- `CLOUD_RUN_SERVICE`: `localserve-api`
+- `DOCKER_IMAGE`: `mrsingh2324/localserve-api`
 - `PUBLIC_APP_URL`, for example the Vercel production URL
 - `CORS_ORIGIN`, for example the same Vercel production URL
 
-These deployment settings can be added as repository variables or repository secrets. Variables are preferred for non-sensitive values, but the workflow supports either.
+The GitHub Actions service account needs permission to create/update Secret Manager secrets and deploy Cloud Run services.
 
 The frontend is prepared for Vercel through `vercel.json`. In Vercel, set `VITE_API_URL` to the Cloud Run API URL.
 
