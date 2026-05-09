@@ -89,8 +89,8 @@ Required GitHub repository secrets:
 - `GCP_PROJECT_ID`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT`
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
+- `DOCKER_USERNAME` or `DOCKERHUB_USERNAME`
+- `DOCKER_PASSWORD` or `DOCKERHUB_TOKEN`
 - `MONGODB_URI`
 - `JWT_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
@@ -106,6 +106,8 @@ Recommended GitHub repository variables:
 - `DOCKER_IMAGE`, defaults to `mrsingh2324/localserve-api`
 - `PUBLIC_APP_URL`, for example the Vercel production URL
 - `CORS_ORIGIN`, for example the same Vercel production URL
+
+These deployment settings can be added as repository variables or repository secrets. Variables are preferred for non-sensitive values, but the workflow supports either.
 
 The frontend is prepared for Vercel through `vercel.json`. In Vercel, set `VITE_API_URL` to the Cloud Run API URL.
 
