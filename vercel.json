@@ -1,6 +1,6 @@
 {
-  "buildCommand": "npm run build --workspace @localserve/web",
+  "buildCommand": "npm run build --workspace @localserve/web && rm -rf dist && cp -R apps/web/dist dist",
   "installCommand": "npm ci",
-  "outputDirectory": "apps/web/dist",
+  "outputDirectory": "dist",
   "framework": "vite"
 }
