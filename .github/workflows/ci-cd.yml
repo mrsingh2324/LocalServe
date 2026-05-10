@@ -46,7 +46,7 @@ jobs:
     env:
       GCP_REGION: ${{ secrets.GCP_REGION }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
-      DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
+      DOCKER_REPOSITORY: localserve-api
     permissions:
       contents: read
       id-token: write
@@ -71,8 +71,10 @@ jobs:
 
       - name: Build and push API image
         run: |
-          IMAGE_URI="${DOCKER_IMAGE}:${GITHUB_SHA}"
-          LATEST_IMAGE_URI="${DOCKER_IMAGE}:latest"
+          IMAGE_NAME="${{ secrets.DOCKER_USERNAME }}/${DOCKER_REPOSITORY}"
+          IMAGE_URI="${IMAGE_NAME}:${GITHUB_SHA}"
+          LATEST_IMAGE_URI="${IMAGE_NAME}:latest"
+          echo "Publishing API image to Docker Hub repository: ${IMAGE_NAME}"
           docker build -f apps/api/Dockerfile -t "${IMAGE_URI}" .
           docker tag "${IMAGE_URI}" "${LATEST_IMAGE_URI}"
           docker push "${IMAGE_URI}"

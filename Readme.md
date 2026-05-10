@@ -91,7 +91,6 @@ Required GitHub repository secrets:
 - `GCP_SERVICE_ACCOUNT`
 - `GCP_REGION`
 - `CLOUD_RUN_SERVICE`
-- `DOCKER_IMAGE`
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 - `PUBLIC_APP_URL`
@@ -106,7 +105,7 @@ Recommended values:
 
 - `GCP_REGION`: `asia-south1`
 - `CLOUD_RUN_SERVICE`: `localserve-api`
-- `DOCKER_IMAGE`: `mrsingh2324/localserve-api`
+- `DOCKER_USERNAME`: your Docker Hub namespace. The workflow pushes to `<DOCKER_USERNAME>/localserve-api`.
 - `PUBLIC_APP_URL`, for example the Vercel production URL
 - `CORS_ORIGIN`, for example the same Vercel production URL
 
