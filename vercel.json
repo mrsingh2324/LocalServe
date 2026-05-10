@@ -2,5 +2,11 @@
   "buildCommand": "npm run build --workspace @localserve/web && rm -rf dist && cp -R apps/web/dist dist",
   "installCommand": "npm ci",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
