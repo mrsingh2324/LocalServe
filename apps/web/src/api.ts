@@ -1,6 +1,6 @@
 import type { MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
 
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
 export function getStoredVendorToken() {
   return localStorage.getItem("localserve_vendor_token") ?? "";

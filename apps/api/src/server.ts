@@ -129,8 +129,26 @@ const notifications = new Map<string, NotificationRecord>();
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const corsOrigin = (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
+  if (!origin) {
+    callback(null, true);
+    return;
+  }
+  const isAllowed = allowedOrigins.some((allowedOrigin) => {
+    if (allowedOrigin === "*") return true;
+    if (allowedOrigin === origin) return true;
+    if (!allowedOrigin.includes("*")) return false;
+    const pattern = new RegExp(`^${allowedOrigin.split("*").map(escapeRegExp).join(".*")}$`);
+    return pattern.test(origin);
+  });
+  callback(isAllowed ? null : new Error(`Origin ${origin} is not allowed by CORS`), isAllowed);
+};
 const io = new Server(server, {
-  cors: { origin: process.env.CORS_ORIGIN?.split(",") ?? ["http://localhost:5173"] }
+  cors: { origin: corsOrigin }
 });
 
 const createOrderBodySchema = z.object({
@@ -166,7 +184,7 @@ const loginSchema = z.object({
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: true, legacyHeaders: false });
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(",") ?? ["http://localhost:5173"] }));
+app.use(cors({ origin: corsOrigin }));
 app.use(
   express.json({
     limit: "1mb",
@@ -179,6 +197,10 @@ if (process.env.NODE_ENV !== "test") app.use(morgan("dev"));
 
 function asyncHandler(handler: express.RequestHandler): express.RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function slugify(value: string) {
