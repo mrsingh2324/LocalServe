@@ -94,7 +94,6 @@ Required GitHub repository secrets:
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 - `PUBLIC_APP_URL`
-- `CORS_ORIGIN`
 - `MONGODB_URI`
 - `JWT_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
@@ -107,7 +106,6 @@ Recommended values:
 - `CLOUD_RUN_SERVICE`: `localserve-api`
 - `DOCKER_USERNAME`: your Docker Hub namespace. The workflow pushes to `<DOCKER_USERNAME>/localserve-api`.
 - `PUBLIC_APP_URL`, for example the Vercel production URL
-- `CORS_ORIGIN`, for example the same Vercel production URL
 
 The GitHub Actions service account needs permission to create/update Secret Manager secrets and deploy Cloud Run services.
 
