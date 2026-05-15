@@ -35,6 +35,11 @@ test("vendor login returns a JWT and scoped vendor menu", async () => {
 
 test("signup creates a vendor and duplicate signup is rejected", async () => {
   resetLocalState();
+  const otp = await request(app)
+    .post("/auth/vendor/otp/request")
+    .send({ phone: "+919900001111", purpose: "register" })
+    .expect(200);
+
   const signup = await request(app)
     .post("/vendor/register")
     .send({
@@ -42,6 +47,7 @@ test("signup creates a vendor and duplicate signup is rejected", async () => {
       phone: "+919900001111",
       locationTag: "Tower C Atrium",
       upiId: "nisha@upi",
+      otpCode: otp.body.devOtp,
       password: "secret123"
     })
     .expect(201);
@@ -56,12 +62,13 @@ test("signup creates a vendor and duplicate signup is rejected", async () => {
       phone: "+919900001111",
       locationTag: "Tower C Atrium",
       upiId: "nisha@upi",
+      otpCode: otp.body.devOtp,
       password: "secret123"
     })
     .expect(409);
 });
 
-test("logged-in vendor can update profile", async () => {
+test("logged-in vendor can update profile without changing immutable slug", async () => {
   resetLocalState();
   const token = await login();
   const response = await request(app)
@@ -74,8 +81,25 @@ test("logged-in vendor can update profile", async () => {
     })
     .expect(200);
 
-  assert.equal(response.body.vendor.slug, "ravi-express-canteen");
+  assert.equal(response.body.vendor.slug, "ravi-canteen");
+  assert.match(response.body.vendor.storefrontUrl, /\/v\/ravi-canteen$/);
   assert.equal(response.body.vendor.upiId, "raviexpress@upi");
+});
+
+test("vendor can login with OTP", async () => {
+  resetLocalState();
+  const otp = await request(app)
+    .post("/auth/vendor/otp/request")
+    .send({ phone: "+919876543210", purpose: "login" })
+    .expect(200);
+
+  const response = await request(app)
+    .post("/auth/vendor/otp/verify")
+    .send({ phone: "+919876543210", otpCode: otp.body.devOtp })
+    .expect(200);
+
+  assert.equal(response.body.vendor.slug, "ravi-canteen");
+  assert.ok(response.body.token);
 });
 
 test("customer order can only be marked ready by the owning vendor", async () => {

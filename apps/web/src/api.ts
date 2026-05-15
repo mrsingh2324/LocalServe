@@ -30,8 +30,22 @@ export function getStorefront(slug: string) {
   return request<{ vendor: Vendor; menuItems: MenuItem[] }>(`/v/${slug}`);
 }
 
-export function registerVendor(payload: { name: string; phone: string; locationTag: string; upiId: string; password?: string }) {
+export function registerVendor(payload: { name: string; phone: string; locationTag: string; upiId: string; otpCode: string; password?: string }) {
   return request<{ vendor: Vendor; token: string }>("/vendor/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function requestVendorOtp(payload: { phone: string; purpose: "login" | "register" }) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/vendor/otp/request", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function verifyVendorOtp(payload: { phone: string; otpCode: string }) {
+  return request<{ vendor: Vendor; token: string }>("/auth/vendor/otp/verify", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -68,7 +82,21 @@ export function createOrder(payload: {
   customerPhone?: string;
   items: { menuItemId: string; quantity: number }[];
 }) {
-  return request<{ order: Order; orderUrl: string }>("/orders", {
+  return request<{
+    order: Order;
+    orderUrl: string;
+    payment: { mode: string; status: string; provider: string; keyId?: string; orderId?: string; amount?: number; currency?: string };
+  }>("/orders", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function confirmOrderPayment(
+  id: string,
+  payload: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }
+) {
+  return request<{ order: Order; orderUrl: string }>(`/orders/${id}/confirm`, {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -123,6 +151,18 @@ export function updateMenuItem(id: string, payload: Partial<MenuItem>) {
   });
 }
 
+export async function uploadMenuItemPhoto(id: string, file: File) {
+  const formData = new FormData();
+  formData.append("photo", file);
+  const response = await fetch(`${API_URL}/vendor/menu/${id}/photo`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ menuItem: MenuItem }>;
+}
+
 export function deleteMenuItem(id: string) {
   return request<void>(`/vendor/menu/${id}`, {
     method: "DELETE",
@@ -131,7 +171,7 @@ export function deleteMenuItem(id: string) {
 }
 
 export function getDashboard() {
-  return request<{ totalOrders: number; revenue: number; recentOrders: Order[] }>("/vendor/dashboard", {
+  return request<{ totalOrders: number; revenue: number; pendingSettlement: number; recentOrders: Order[] }>("/vendor/dashboard", {
     headers: authHeaders()
   });
 }

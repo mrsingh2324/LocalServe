@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 import type { MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
 import {
   API_URL,
+  confirmOrderPayment,
   createMenuItem,
   createOrder,
   deleteMenuItem,
@@ -19,19 +20,86 @@ import {
   getVendorQr,
   loginVendor,
   registerVendor,
+  requestVendorOtp,
   setStoredVendorToken,
   updateMenuItem,
   updateVendorProfile,
-  updateOrderStatus
+  verifyVendorOtp,
+  updateOrderStatus,
+  uploadMenuItemPhoto
 } from "./api";
 import { buildCartLines, useCartStore } from "./cartStore";
 import "./styles.css";
 
 const socket = io(API_URL, { autoConnect: true });
 
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+  }
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
+
+function loadRazorpayScript() {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-razorpay-checkout]");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Could not load Razorpay checkout")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.razorpayCheckout = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Could not load Razorpay checkout"));
+    document.body.appendChild(script);
+  });
+}
+
+async function openRazorpayCheckout(options: {
+  keyId: string;
+  orderId: string;
+  amount: number;
+  currency: string;
+  name: string;
+  email: string;
+  phone: string;
+  onSuccess: (payload: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => Promise<void>;
+}) {
+  await loadRazorpayScript();
+  await new Promise<void>((resolve, reject) => {
+    if (!window.Razorpay) {
+      reject(new Error("Razorpay checkout unavailable"));
+      return;
+    }
+    const checkout = new window.Razorpay({
+      key: options.keyId,
+      amount: options.amount,
+      currency: options.currency,
+      name: options.name,
+      order_id: options.orderId,
+      prefill: { email: options.email, contact: options.phone },
+      handler: async (payload: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+        try {
+          await options.onSuccess(payload);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      },
+      modal: {
+        ondismiss: () => reject(new Error("Payment cancelled"))
+      }
+    });
+    checkout.open();
   });
 }
 
@@ -70,15 +138,35 @@ function CustomerStorefront() {
 
   async function pay() {
     setIsPaying(true);
-    const response = await createOrder({
-      vendorSlug: slug,
-      customerEmail: email,
-      customerPhone: phone || undefined,
-      items: cartLines.map((line) => ({ menuItemId: line.item.id, quantity: line.quantity }))
-    });
-    setPlacedOrder(response.order);
-    clear();
-    setIsPaying(false);
+    try {
+      const response = await createOrder({
+        vendorSlug: slug,
+        customerEmail: email,
+        customerPhone: phone || undefined,
+        items: cartLines.map((line) => ({ menuItemId: line.item.id, quantity: line.quantity }))
+      });
+      if (response.payment.provider === "razorpay" && response.payment.keyId && response.payment.orderId) {
+        await openRazorpayCheckout({
+          keyId: response.payment.keyId,
+          orderId: response.payment.orderId,
+          amount: response.payment.amount ?? response.order.totalAmount * 100,
+          currency: response.payment.currency ?? "INR",
+          name: vendor?.name ?? "LocalServe",
+          email,
+          phone,
+          onSuccess: async (payload) => {
+            const confirmed = await confirmOrderPayment(response.order.id, payload);
+            setPlacedOrder(confirmed.order);
+            clear();
+          }
+        });
+      } else {
+        setPlacedOrder(response.order);
+        clear();
+      }
+    } finally {
+      setIsPaying(false);
+    }
   }
 
   if (!vendor) return <Shell><div className="empty">Loading storefront...</div></Shell>;
@@ -235,14 +323,15 @@ function VendorConsole() {
   const [menu, setMenu] = React.useState<MenuItem[]>([]);
   const [vendor, setVendor] = React.useState<Vendor | null>(null);
   const [demoVendors, setDemoVendors] = React.useState<Vendor[]>([]);
-  const [summary, setSummary] = React.useState({ totalOrders: 0, revenue: 0 });
+  const [summary, setSummary] = React.useState({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
-  const [loginDraft, setLoginDraft] = React.useState({ phone: "+919876543210", password: "demo123" });
+  const [loginDraft, setLoginDraft] = React.useState({ phone: "+919876543210", password: "demo123", otpCode: "" });
   const [profileDraft, setProfileDraft] = React.useState({
     name: "Ravi's Canteen",
     phone: "+919876543210",
     locationTag: "Office Block B, Ground Floor",
     upiId: "ravi@upi",
+    otpCode: "",
     password: "demo123"
   });
   const [menuDraft, setMenuDraft] = React.useState({
@@ -254,7 +343,9 @@ function VendorConsole() {
     category: "Snacks",
     isAvailable: true
   });
+  const [menuPhotoFile, setMenuPhotoFile] = React.useState<File | null>(null);
   const [issuedToken, setIssuedToken] = React.useState("");
+  const [otpHint, setOtpHint] = React.useState("");
   const isLoggedIn = Boolean(vendor && getStoredVendorToken());
 
   function goToPanel(id: string) {
@@ -272,7 +363,7 @@ function VendorConsole() {
     setOrders(orderData.orders);
     setMenu(menuData.menuItems);
     setVendor(qrData.vendor);
-    setSummary({ totalOrders: dashboard.totalOrders, revenue: dashboard.revenue });
+    setSummary({ totalOrders: dashboard.totalOrders, revenue: dashboard.revenue, pendingSettlement: dashboard.pendingSettlement });
   }, []);
 
   React.useEffect(() => {
@@ -326,13 +417,16 @@ function VendorConsole() {
       isAvailable: menuDraft.isAvailable
     };
     if (menuDraft.id) {
-      const response = await updateMenuItem(menuDraft.id, payload);
+      let response = await updateMenuItem(menuDraft.id, payload);
+      if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
       setMenu((current) => current.map((candidate) => (candidate.id === response.menuItem.id ? response.menuItem : candidate)));
     } else {
-      const response = await createMenuItem(payload);
+      let response = await createMenuItem(payload);
+      if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
       setMenu((current) => [response.menuItem, ...current]);
     }
     setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true });
+    setMenuPhotoFile(null);
   }
 
   async function removeItem(item: MenuItem) {
@@ -341,6 +435,7 @@ function VendorConsole() {
   }
 
   function editItem(item: MenuItem) {
+    setMenuPhotoFile(null);
     setMenuDraft({
       id: item.id,
       name: item.name,
@@ -352,9 +447,21 @@ function VendorConsole() {
     });
   }
 
+  async function sendLoginOtp() {
+    const response = await requestVendorOtp({ phone: loginDraft.phone, purpose: "login" });
+    setOtpHint(response.devOtp ? `Dev OTP: ${response.devOtp}` : "OTP sent by SMS.");
+  }
+
+  async function sendRegisterOtp() {
+    const response = await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
+    setOtpHint(response.devOtp ? `Dev OTP: ${response.devOtp}` : "OTP sent by SMS.");
+  }
+
   async function login(event: React.FormEvent) {
     event.preventDefault();
-    const response = await loginVendor(loginDraft);
+    const response = loginDraft.otpCode
+      ? await verifyVendorOtp({ phone: loginDraft.phone, otpCode: loginDraft.otpCode })
+      : await loginVendor(loginDraft);
     setStoredVendorToken(response.token);
     setIssuedToken(response.token);
     setVendor(response.vendor);
@@ -394,7 +501,7 @@ function VendorConsole() {
     setVendor(null);
     setOrders([]);
     setMenu([]);
-    setSummary({ totalOrders: 0, revenue: 0 });
+    setSummary({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
     setIssuedToken("");
     setAuthMode("entry");
   }
@@ -446,10 +553,16 @@ function VendorConsole() {
                   Mobile number
                   <input value={loginDraft.phone} onChange={(event) => setLoginDraft((draft) => ({ ...draft, phone: event.target.value }))} />
                 </label>
+                <button type="button" className="quiet-button" onClick={sendLoginOtp}>Send OTP</button>
                 <label>
-                  Password
+                  OTP
+                  <input value={loginDraft.otpCode} onChange={(event) => setLoginDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
+                </label>
+                <label>
+                  Password fallback
                   <input type="password" value={loginDraft.password} onChange={(event) => setLoginDraft((draft) => ({ ...draft, password: event.target.value }))} />
                 </label>
+                {otpHint ? <p className="token-note">{otpHint}</p> : null}
                 <button>Login</button>
               </form>
               <div className="demo-vendors">
@@ -457,7 +570,7 @@ function VendorConsole() {
                   <button
                     key={demo.id}
                     className="small-link demo-button"
-                    onClick={() => setLoginDraft({ phone: demo.phone, password: "demo123" })}
+                    onClick={() => setLoginDraft({ phone: demo.phone, password: "demo123", otpCode: "" })}
                   >
                     {demo.name}
                   </button>
@@ -487,6 +600,14 @@ function VendorConsole() {
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, phone: event.target.value }))}
                   />
                 </label>
+                <button type="button" className="quiet-button" onClick={sendRegisterOtp}>Send OTP</button>
+                <label>
+                  OTP
+                  <input
+                    value={profileDraft.otpCode}
+                    onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))}
+                  />
+                </label>
                 <label>
                   Location tag
                   <input
@@ -509,6 +630,7 @@ function VendorConsole() {
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))}
                   />
                 </label>
+                {otpHint ? <p className="token-note">{otpHint}</p> : null}
                 <button>Create shop</button>
               </form>
             </section>
@@ -607,7 +729,8 @@ function VendorConsole() {
           <h2>Today&apos;s summary</h2>
           <div className="summary-grid">
             <div><span>Orders</span><strong>{summary.totalOrders}</strong></div>
-            <div><span>Revenue</span><strong>₹{summary.revenue}</strong></div>
+            <div><span>Collected revenue</span><strong>₹{summary.revenue}</strong></div>
+            <div><span>Pending settlement</span><strong>₹{summary.pendingSettlement}</strong></div>
           </div>
           {vendor ? (
             <div className="qr-panel">
@@ -638,6 +761,14 @@ function VendorConsole() {
             <label>
               Photo URL
               <input value={menuDraft.photoUrl} onChange={(event) => setMenuDraft((draft) => ({ ...draft, photoUrl: event.target.value }))} />
+            </label>
+            <label>
+              Upload photo
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                onChange={(event) => setMenuPhotoFile(event.target.files?.[0] ?? null)}
+              />
             </label>
             <label>
               Category

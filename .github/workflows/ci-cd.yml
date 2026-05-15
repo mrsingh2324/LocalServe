@@ -85,8 +85,17 @@ jobs:
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_PHONE: ${{ secrets.TWILIO_FROM_PHONE }}
+          STORAGE_ACCESS_KEY_ID: ${{ secrets.STORAGE_ACCESS_KEY_ID }}
+          STORAGE_SECRET_ACCESS_KEY: ${{ secrets.STORAGE_SECRET_ACCESS_KEY }}
         run: |
           sync_secret() {
             local name="$1"
@@ -103,13 +112,28 @@ jobs:
           }
 
           sync_secret "MONGODB_URI" "${MONGODB_URI}"
+          sync_secret "REDIS_URL" "${REDIS_URL}"
           sync_secret "JWT_SECRET" "${JWT_SECRET}"
           sync_secret "RAZORPAY_WEBHOOK_SECRET" "${RAZORPAY_WEBHOOK_SECRET}"
+          sync_secret "RAZORPAY_KEY_ID" "${RAZORPAY_KEY_ID}"
+          sync_secret "RAZORPAY_KEY_SECRET" "${RAZORPAY_KEY_SECRET}"
+          sync_secret "SENDGRID_API_KEY" "${SENDGRID_API_KEY}"
+          sync_secret "TWILIO_ACCOUNT_SID" "${TWILIO_ACCOUNT_SID}"
+          sync_secret "TWILIO_AUTH_TOKEN" "${TWILIO_AUTH_TOKEN}"
+          sync_secret "TWILIO_FROM_PHONE" "${TWILIO_FROM_PHONE}"
+          sync_secret "STORAGE_ACCESS_KEY_ID" "${STORAGE_ACCESS_KEY_ID}"
+          sync_secret "STORAGE_SECRET_ACCESS_KEY" "${STORAGE_SECRET_ACCESS_KEY}"
 
       - name: Deploy Cloud Run service
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+          CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_ENDPOINT: ${{ secrets.STORAGE_ENDPOINT }}
+          STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
+          STORAGE_PUBLIC_BASE_URL: ${{ secrets.STORAGE_PUBLIC_BASE_URL }}
         run: |
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --project="${GCP_PROJECT_ID}" \
@@ -122,8 +146,8 @@ jobs:
             --max-instances=3 \
             --memory=512Mi \
             --cpu=1 \
-            --set-env-vars="NODE_ENV=production,USE_MONGO=true,PUBLIC_APP_URL=${PUBLIC_APP_URL}" \
-            --set-secrets="MONGODB_URI=MONGODB_URI:latest,JWT_SECRET=JWT_SECRET:latest,RAZORPAY_WEBHOOK_SECRET=RAZORPAY_WEBHOOK_SECRET:latest"
+            --set-env-vars="NODE_ENV=production,USE_MONGO=true,PUBLIC_APP_URL=${PUBLIC_APP_URL},CORS_ORIGIN=${CORS_ORIGIN},EMAIL_FROM=${EMAIL_FROM},STORAGE_BUCKET=${STORAGE_BUCKET},STORAGE_ENDPOINT=${STORAGE_ENDPOINT},STORAGE_REGION=${STORAGE_REGION},STORAGE_PUBLIC_BASE_URL=${STORAGE_PUBLIC_BASE_URL}" \
+            --set-secrets="MONGODB_URI=MONGODB_URI:latest,REDIS_URL=REDIS_URL:latest,JWT_SECRET=JWT_SECRET:latest,RAZORPAY_WEBHOOK_SECRET=RAZORPAY_WEBHOOK_SECRET:latest,RAZORPAY_KEY_ID=RAZORPAY_KEY_ID:latest,RAZORPAY_KEY_SECRET=RAZORPAY_KEY_SECRET:latest,SENDGRID_API_KEY=SENDGRID_API_KEY:latest,TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_FROM_PHONE=TWILIO_FROM_PHONE:latest,STORAGE_ACCESS_KEY_ID=STORAGE_ACCESS_KEY_ID:latest,STORAGE_SECRET_ACCESS_KEY=STORAGE_SECRET_ACCESS_KEY:latest"
 
       - name: Show deployed URL
         run: |

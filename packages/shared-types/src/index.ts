@@ -49,6 +49,7 @@ export const orderSchema = z.object({
   items: z.array(orderLineSchema),
   totalAmount: z.number().nonnegative(),
   paymentId: z.string().optional(),
+  paymentOrderId: z.string().optional(),
   createdAt: z.string(),
   readyAt: z.string().optional()
 });

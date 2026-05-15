@@ -4,6 +4,8 @@ import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import sgMail from "@sendgrid/mail";
+import multer from "multer";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -12,7 +14,12 @@ import jwt from "jsonwebtoken";
 import morgan from "morgan";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import Razorpay from "razorpay";
+import { Redis } from "ioredis";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Server } from "socket.io";
+import twilio from "twilio";
 import { z, ZodError } from "zod";
 import {
   MenuItemModel,
@@ -47,12 +54,73 @@ type StoredState = {
 
 const port = Number(process.env.PORT ?? 4000);
 const publicAppUrl = process.env.PUBLIC_APP_URL ?? "http://localhost:5173";
+const corsOrigin = process.env.CORS_ORIGIN ?? "http://localhost:5173";
 const vendorToken = process.env.DEV_VENDOR_TOKEN ?? "dev-vendor-token";
 const jwtSecret = process.env.JWT_SECRET ?? "localserve-dev-secret-change-me";
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET ?? "localserve-dev-webhook-secret";
+const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+const platformFeePercent = Number(process.env.PLATFORM_FEE_PERCENT ?? 2);
+const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
+const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
+const twilioFromPhone = process.env.TWILIO_FROM_PHONE;
+const sendgridApiKey = process.env.SENDGRID_API_KEY;
+const emailFrom = process.env.EMAIL_FROM ?? "orders@localserve.local";
+const redisUrl = process.env.REDIS_URL;
+const storageBucket = process.env.STORAGE_BUCKET;
+const storageEndpoint = process.env.STORAGE_ENDPOINT;
+const storageRegion = process.env.STORAGE_REGION ?? "auto";
+const storageAccessKeyId = process.env.STORAGE_ACCESS_KEY_ID;
+const storageSecretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY;
+const storagePublicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL;
+const otpDevCode = process.env.OTP_DEV_CODE ?? "123456";
+const otpTtlMs = Number(process.env.OTP_TTL_MINUTES ?? 5) * 60 * 1000;
 const dataFile = path.resolve(process.cwd(), "data/localserve.json");
 const useMongo = process.env.NODE_ENV !== "test" && (process.env.USE_MONGO === "true" || process.env.USE_MONGO === "1");
 const mongoUri = process.env.MONGODB_URI ?? "mongodb://localserve:localserve@localhost:27017/localserve?authSource=admin";
+const razorpayClient = razorpayKeyId && razorpayKeySecret ? new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret }) : undefined;
+const twilioClient = twilioAccountSid && twilioAuthToken && twilioFromPhone ? twilio(twilioAccountSid, twilioAuthToken) : undefined;
+const redisClient = redisUrl && process.env.NODE_ENV !== "test" ? new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 2 }) : undefined;
+const redisPubClient = redisClient;
+const redisSubClient = redisClient ? redisClient.duplicate() : undefined;
+const s3Client = storageBucket && storageAccessKeyId && storageSecretAccessKey
+  ? new S3Client({
+      region: storageRegion,
+      endpoint: storageEndpoint,
+      forcePathStyle: Boolean(storageEndpoint && !storageEndpoint.includes("amazonaws.com")),
+      credentials: { accessKeyId: storageAccessKeyId, secretAccessKey: storageSecretAccessKey }
+    })
+  : undefined;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    callback(null, /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype));
+  }
+});
+
+if (sendgridApiKey) sgMail.setApiKey(sendgridApiKey);
+
+function requireEnv(name: string, value: string | undefined) {
+  if (!value) throw new Error(`Missing required production env var: ${name}`);
+}
+
+function validateRuntimeConfig() {
+  if (process.env.NODE_ENV !== "production") return;
+  requireEnv("CORS_ORIGIN", process.env.CORS_ORIGIN);
+  requireEnv("RAZORPAY_KEY_ID", razorpayKeyId);
+  requireEnv("RAZORPAY_KEY_SECRET", razorpayKeySecret);
+  requireEnv("RAZORPAY_WEBHOOK_SECRET", process.env.RAZORPAY_WEBHOOK_SECRET);
+  requireEnv("TWILIO_ACCOUNT_SID", twilioAccountSid);
+  requireEnv("TWILIO_AUTH_TOKEN", twilioAuthToken);
+  requireEnv("TWILIO_FROM_PHONE", twilioFromPhone);
+  requireEnv("SENDGRID_API_KEY", sendgridApiKey);
+  requireEnv("EMAIL_FROM", process.env.EMAIL_FROM);
+  requireEnv("REDIS_URL", redisUrl);
+  requireEnv("STORAGE_BUCKET", storageBucket);
+  requireEnv("STORAGE_ACCESS_KEY_ID", storageAccessKeyId);
+  requireEnv("STORAGE_SECRET_ACCESS_KEY", storageSecretAccessKey);
+}
 
 const demoPasswordHash = bcrypt.hashSync("demo123", 10);
 
@@ -126,10 +194,20 @@ let menuItems: MenuItem[] = [
 
 const orders = new Map<string, Order>();
 const notifications = new Map<string, NotificationRecord>();
+const otpChallenges = new Map<string, { codeHash: string; expiresAt: number; attempts: number }>();
 
 const app = express();
 const server = http.createServer(app);
-const corsOptions = { origin: "*" };
+const corsAllowList = corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || corsAllowList.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("CORS origin denied"));
+  }
+};
 const io = new Server(server, {
   cors: corsOptions
 });
@@ -153,6 +231,7 @@ const vendorRegistrationSchema = z.object({
   phone: z.string().min(10).max(15),
   locationTag: z.string().min(2).max(120),
   upiId: z.string().min(3).max(80),
+  otpCode: z.string().min(4).max(8),
   password: z.string().min(6).default("demo123")
 });
 const vendorProfileSchema = z.object({
@@ -164,7 +243,20 @@ const loginSchema = z.object({
   phone: z.string().min(10),
   password: z.string().min(6)
 });
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: true, legacyHeaders: false });
+const otpRequestSchema = z.object({
+  phone: z.string().min(10).max(15),
+  purpose: z.enum(["login", "register"]).default("login")
+});
+const otpVerifySchema = z.object({
+  phone: z.string().min(10).max(15),
+  otpCode: z.string().min(4).max(8)
+});
+const paymentConfirmationSchema = z.object({
+  razorpay_order_id: z.string(),
+  razorpay_payment_id: z.string(),
+  razorpay_signature: z.string()
+});
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: process.env.NODE_ENV === "test" ? 1000 : 8, standardHeaders: true, legacyHeaders: false });
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors(corsOptions));
@@ -184,6 +276,17 @@ function asyncHandler(handler: express.RequestHandler): express.RequestHandler {
 
 function slugify(value: string) {
   return value.toLowerCase().trim().replace(/['']/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+}
+
+function uniqueSlug(value: string) {
+  const base = slugify(value) || `vendor-${crypto.randomBytes(3).toString("hex")}`;
+  let candidate = base;
+  let suffix = 2;
+  while (vendors.some((vendor) => vendor.slug === candidate)) {
+    candidate = `${base.slice(0, 54)}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
 }
 
 function createVendorToken(vendorId: string) {
@@ -224,6 +327,96 @@ function publicVendor(vendor: StoredVendor): Vendor {
   return { ...vendor, passwordHash: undefined, storefrontUrl: `${publicAppUrl}/v/${vendor.slug}` } as Vendor;
 }
 
+function otpKey(phone: string, purpose: "login" | "register") {
+  return `${purpose}:${phone}`;
+}
+
+function hashOtp(phone: string, purpose: "login" | "register", code: string) {
+  return crypto.createHmac("sha256", jwtSecret).update(`${purpose}:${phone}:${code}`).digest("hex");
+}
+
+function createOtpCode() {
+  if (process.env.NODE_ENV !== "production") return otpDevCode;
+  if (!twilioClient) throw Object.assign(new Error("Twilio is not configured for production OTP delivery"), { status: 503 });
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function setOtpChallenge(phone: string, purpose: "login" | "register", challenge: { codeHash: string; expiresAt: number; attempts: number }) {
+  const key = otpKey(phone, purpose);
+  if (redisClient?.status === "ready") {
+    await redisClient.set(key, JSON.stringify(challenge), "PX", otpTtlMs);
+    return;
+  }
+  otpChallenges.set(key, challenge);
+}
+
+async function getOtpChallenge(phone: string, purpose: "login" | "register") {
+  const key = otpKey(phone, purpose);
+  if (redisClient?.status === "ready") {
+    const raw = await redisClient.get(key);
+    return raw ? JSON.parse(raw) as { codeHash: string; expiresAt: number; attempts: number } : undefined;
+  }
+  return otpChallenges.get(key);
+}
+
+async function deleteOtpChallenge(phone: string, purpose: "login" | "register") {
+  const key = otpKey(phone, purpose);
+  if (redisClient?.status === "ready") {
+    await redisClient.del(key);
+    return;
+  }
+  otpChallenges.delete(key);
+}
+
+async function updateOtpChallenge(phone: string, purpose: "login" | "register", challenge: { codeHash: string; expiresAt: number; attempts: number }) {
+  if (redisClient?.status === "ready") {
+    await redisClient.set(otpKey(phone, purpose), JSON.stringify(challenge), "PX", Math.max(challenge.expiresAt - Date.now(), 1));
+    return;
+  }
+  otpChallenges.set(otpKey(phone, purpose), challenge);
+}
+
+async function sendOtp(phone: string, purpose: "login" | "register") {
+  const code = createOtpCode();
+  await setOtpChallenge(phone, purpose, {
+    codeHash: hashOtp(phone, purpose, code),
+    expiresAt: Date.now() + otpTtlMs,
+    attempts: 0
+  });
+
+  if (twilioClient && twilioFromPhone && process.env.NODE_ENV === "production") {
+    await twilioClient.messages.create({
+      to: phone,
+      from: twilioFromPhone,
+      body: `Your LocalServe ${purpose} OTP is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
+    });
+  }
+
+  return code;
+}
+
+async function verifyOtp(phone: string, purpose: "login" | "register", code: string) {
+  const challenge = await getOtpChallenge(phone, purpose);
+  if (!challenge || challenge.expiresAt < Date.now()) {
+    await deleteOtpChallenge(phone, purpose);
+    return false;
+  }
+  challenge.attempts += 1;
+  if (challenge.attempts > 5) {
+    await deleteOtpChallenge(phone, purpose);
+    return false;
+  }
+  const actual = Buffer.from(hashOtp(phone, purpose, code));
+  const expected = Buffer.from(challenge.codeHash);
+  const valid = actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  if (valid) {
+    await deleteOtpChallenge(phone, purpose);
+  } else {
+    await updateOtpChallenge(phone, purpose, challenge);
+  }
+  return valid;
+}
+
 function getAuthedVendor(req: express.Request) {
   const vendorId = (req as express.Request & { vendorId?: string }).vendorId;
   return vendorId ? getVendorById(vendorId) : undefined;
@@ -255,14 +448,32 @@ function requireVendor(req: express.Request, res: express.Response, next: expres
 
 function generateOrderCode(vendorId: string) {
   const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const today = businessDateKey(new Date());
   let code = "";
   do {
     code =
       letters[Math.floor(Math.random() * letters.length)] +
       letters[Math.floor(Math.random() * letters.length)] +
       String(Math.floor(Math.random() * 10000)).padStart(4, "0");
-  } while ([...orders.values()].some((order) => order.vendorId === vendorId && order.orderCode === code));
+  } while ([...orders.values()].some((order) => order.vendorId === vendorId && businessDateKey(new Date(order.createdAt)) === today && order.orderCode === code));
   return code;
+}
+
+function businessDateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+function verifyRazorpaySignature(orderId: string, paymentId: string, signature: string) {
+  if (!razorpayKeySecret) return false;
+  const expected = crypto.createHmac("sha256", razorpayKeySecret).update(`${orderId}|${paymentId}`).digest("hex");
+  const received = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  return received.length === expectedBuffer.length && crypto.timingSafeEqual(received, expectedBuffer);
 }
 
 async function buildVendorResponse(vendor: StoredVendor) {
@@ -279,7 +490,33 @@ function vendorOrders(vendorId: string) {
   return [...orders.values()].filter((order) => order.vendorId === vendorId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-function queueReadyNotification(order: Order) {
+function extensionForMimeType(mimetype: string) {
+  if (mimetype === "image/png") return "png";
+  if (mimetype === "image/webp") return "webp";
+  if (mimetype === "image/gif") return "gif";
+  return "jpg";
+}
+
+function publicStorageUrl(key: string) {
+  if (storagePublicBaseUrl) return `${storagePublicBaseUrl.replace(/\/+$/, "")}/${key}`;
+  if (storageEndpoint) return `${storageEndpoint.replace(/\/+$/, "")}/${storageBucket}/${key}`;
+  return `https://${storageBucket}.s3.${storageRegion}.amazonaws.com/${key}`;
+}
+
+async function uploadMenuPhoto(vendorId: string, itemId: string, file: Express.Multer.File) {
+  if (!s3Client || !storageBucket) throw Object.assign(new Error("Menu photo storage is not configured"), { status: 503 });
+  const key = `vendors/${vendorId}/menu/${itemId}/${crypto.randomUUID()}.${extensionForMimeType(file.mimetype)}`;
+  await s3Client.send(new PutObjectCommand({
+    Bucket: storageBucket,
+    Key: key,
+    Body: file.buffer,
+    ContentType: file.mimetype,
+    CacheControl: "public, max-age=31536000, immutable"
+  }));
+  return publicStorageUrl(key);
+}
+
+async function queueReadyNotification(order: Order) {
   const vendor = getVendorById(order.vendorId);
   const notification: NotificationRecord = {
     id: crypto.randomUUID(),
@@ -289,13 +526,38 @@ function queueReadyNotification(order: Order) {
     recipient: order.customerEmail,
     subject: `Order #${order.orderCode} is ready`,
     body: `Your order from ${vendor?.name ?? "LocalServe"} is ready for pickup. Show code ${order.orderCode} at the counter.`,
-    status: "SENT",
-    attempts: 1,
+    status: "QUEUED",
+    attempts: 0,
     createdAt: new Date().toISOString(),
-    deliveredAt: new Date().toISOString()
   };
   notifications.set(notification.id, notification);
+
+  if (!sendgridApiKey || process.env.NODE_ENV === "test") return notification;
+
+  notification.attempts += 1;
+  try {
+    await sgMail.send({
+      to: notification.recipient,
+      from: emailFrom,
+      subject: notification.subject,
+      text: notification.body
+    });
+    notification.status = "SENT";
+    notification.deliveredAt = new Date().toISOString();
+  } catch (error) {
+    notification.status = "FAILED";
+    console.error("Ready notification email failed", error);
+  }
   return notification;
+}
+
+async function confirmOrderPayment(order: Order, paymentId: string) {
+  const updated: Order = { ...order, status: "CONFIRMED", paymentId };
+  orders.set(updated.id, updated);
+  await persistState();
+  io.to(`vendor:${updated.vendorId}`).emit("new_order", updated);
+  io.to(`order:${updated.id}`).emit("order_updated", updated);
+  return updated;
 }
 
 async function loadState() {
@@ -340,6 +602,7 @@ async function loadState() {
           items: order.items as unknown as OrderLine[],
           totalAmount: order.totalAmount,
           paymentId: order.paymentId ?? undefined,
+          paymentOrderId: order.paymentOrderId ?? undefined,
           createdAt: order.createdAt.toISOString(),
           readyAt: order.readyAt?.toISOString()
         });
@@ -424,7 +687,46 @@ app.get("/demo-vendors", asyncHandler(async (_req, res) => {
   res.json({ vendors: await Promise.all(vendors.map(buildVendorResponse)) });
 }));
 
+app.post("/auth/vendor/otp/request", authLimiter, asyncHandler(async (req, res) => {
+  const body = otpRequestSchema.parse(req.body);
+  const vendor = vendors.find((candidate) => candidate.phone === body.phone);
+  if (body.purpose === "login" && !vendor) {
+    res.status(404).json({ error: "Vendor not found. Create a shop first." });
+    return;
+  }
+  if (body.purpose === "register" && vendor) {
+    res.status(409).json({ error: "Vendor already exists. Please login with the same mobile number." });
+    return;
+  }
+
+  const code = await sendOtp(body.phone, body.purpose);
+  res.json({
+    status: "sent",
+    channel: twilioClient && process.env.NODE_ENV === "production" ? "sms" : "dev",
+    expiresInSeconds: Math.round(otpTtlMs / 1000),
+    ...(twilioClient && process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+  });
+}));
+
+app.post("/auth/vendor/otp/verify", authLimiter, asyncHandler(async (req, res) => {
+  const body = otpVerifySchema.parse(req.body);
+  const vendor = vendors.find((candidate) => candidate.phone === body.phone);
+  if (!vendor) {
+    res.status(404).json({ error: "Vendor not found. Create a shop first." });
+    return;
+  }
+  if (!(await verifyOtp(body.phone, "login", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+  res.json({ vendor: await buildVendorResponse(vendor), token: createVendorToken(vendor.id) });
+}));
+
 app.post("/auth/vendor/login", authLimiter, asyncHandler(async (req, res) => {
+  if (process.env.NODE_ENV === "production" && process.env.ENABLE_PASSWORD_LOGIN !== "true") {
+    res.status(403).json({ error: "Password login is disabled. Use OTP login." });
+    return;
+  }
   const body = loginSchema.parse(req.body);
   const vendor = vendors.find((candidate) => candidate.phone === body.phone);
   if (!vendor || !bcrypt.compareSync(body.password, vendor.passwordHash)) {
@@ -441,7 +743,11 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     res.status(409).json({ error: "Vendor already exists. Please login with the same credentials." });
     return;
   }
-  const slug = slugify(body.name);
+  if (!(await verifyOtp(body.phone, "register", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+  const slug = uniqueSlug(body.name);
   const vendor: StoredVendor = {
     id: crypto.randomUUID(),
     passwordHash: bcrypt.hashSync(body.password, 10),
@@ -476,16 +782,15 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
   const body = vendorProfileSchema.parse(req.body);
   Object.assign(vendor, {
     name: body.name,
-    slug: slugify(body.name),
     locationTag: body.locationTag,
     upiId: body.upiId,
-    storefrontUrl: `${publicAppUrl}/v/${slugify(body.name)}`
+    storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`
   });
   await persistState();
   res.json({ vendor: await buildVendorResponse(vendor) });
 }));
 
-app.post("/payments/razorpay/webhook", (req, res) => {
+app.post("/payments/razorpay/webhook", asyncHandler(async (req, res) => {
   const signature = req.header("x-razorpay-signature");
   const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
   const expected = crypto.createHmac("sha256", razorpayWebhookSecret).update(rawBody).digest("hex");
@@ -495,8 +800,15 @@ app.post("/payments/razorpay/webhook", (req, res) => {
     res.status(401).json({ error: "Invalid Razorpay signature" });
     return;
   }
+  const paymentEntity = req.body?.payload?.payment?.entity;
+  const providerOrderId = typeof paymentEntity?.order_id === "string" ? paymentEntity.order_id : undefined;
+  const providerPaymentId = typeof paymentEntity?.id === "string" ? paymentEntity.id : undefined;
+  if (providerOrderId && providerPaymentId) {
+    const order = [...orders.values()].find((candidate) => candidate.paymentOrderId === providerOrderId);
+    if (order && order.status === "PENDING") await confirmOrderPayment(order, providerPaymentId);
+  }
   res.json({ received: true });
-});
+}));
 
 app.get("/v/:vendorSlug", asyncHandler(async (req, res) => {
   const vendor = getVendorBySlug(req.params.vendorSlug);
@@ -521,24 +833,64 @@ app.post("/orders", asyncHandler(async (req, res) => {
     return { menuItemId: menuItem.id, name: menuItem.name, quantity: cartItem.quantity, unitPrice: menuItem.price, lineTotal: menuItem.price * cartItem.quantity };
   });
 
+  const totalAmount = lines.reduce((sum, line) => sum + line.lineTotal, 0);
   const order: Order = {
     id: crypto.randomUUID(),
     vendorId: vendor.id,
     orderCode: generateOrderCode(vendor.id),
     customerEmail: body.customerEmail,
     customerPhone: body.customerPhone,
-    status: "CONFIRMED",
+    status: razorpayClient ? "PENDING" : "CONFIRMED",
     items: lines,
-    totalAmount: lines.reduce((sum, line) => sum + line.lineTotal, 0),
-    paymentId: `pay_test_${crypto.randomBytes(6).toString("hex")}`,
+    totalAmount,
+    paymentId: razorpayClient ? undefined : `pay_test_${crypto.randomBytes(6).toString("hex")}`,
     createdAt: new Date().toISOString()
   };
 
+  let razorpayOrder: { id: string; amount: number; currency: string } | undefined;
+  if (razorpayClient) {
+    const providerOrder = await razorpayClient.orders.create({
+      amount: Math.round(totalAmount * 100),
+      currency: "INR",
+      receipt: order.id,
+      notes: {
+        localserve_order_id: order.id,
+        vendor_id: vendor.id,
+        platform_fee_percent: String(platformFeePercent)
+      }
+    });
+    razorpayOrder = { id: providerOrder.id, amount: Number(providerOrder.amount), currency: providerOrder.currency };
+    order.paymentOrderId = providerOrder.id;
+  }
+
   orders.set(order.id, order);
   await persistState();
-  io.to(`vendor:${vendor.id}`).emit("new_order", order);
-  io.to(`order:${order.id}`).emit("order_updated", order);
-  res.status(201).json({ order, payment: { mode: "test", status: "captured", provider: "razorpay-test" }, orderUrl: `${publicAppUrl}/order/${order.id}` });
+  if (!razorpayClient) {
+    io.to(`vendor:${vendor.id}`).emit("new_order", order);
+    io.to(`order:${order.id}`).emit("order_updated", order);
+  }
+  res.status(201).json({
+    order,
+    payment: razorpayOrder
+      ? { mode: "live", status: "created", provider: "razorpay", keyId: razorpayKeyId, orderId: razorpayOrder.id, amount: razorpayOrder.amount, currency: razorpayOrder.currency }
+      : { mode: "test", status: "captured", provider: "razorpay-test" },
+    orderUrl: `${publicAppUrl}/order/${order.id}`
+  });
+}));
+
+app.post("/orders/:id/confirm", asyncHandler(async (req, res) => {
+  const body = paymentConfirmationSchema.parse(req.body);
+  const order = orders.get(req.params.id);
+  if (!order || order.paymentOrderId !== body.razorpay_order_id) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (!verifyRazorpaySignature(body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature)) {
+    res.status(401).json({ error: "Invalid Razorpay payment signature" });
+    return;
+  }
+  const updated = await confirmOrderPayment(order, body.razorpay_payment_id);
+  res.json({ order: updated, orderUrl: `${publicAppUrl}/order/${updated.id}` });
 }));
 
 app.get("/orders/:id", (req, res) => {
@@ -562,7 +914,7 @@ app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => 
 
   const updated: Order = { ...order, status, readyAt: status === "READY" ? new Date().toISOString() : order.readyAt };
   orders.set(updated.id, updated);
-  const notification = status === "READY" ? queueReadyNotification(updated) : undefined;
+  const notification = status === "READY" ? await queueReadyNotification(updated) : undefined;
   await persistState();
   io.to(`vendor:${vendor.id}`).emit("order_updated", updated);
   io.to(`order:${updated.id}`).emit(status === "READY" ? "order_ready" : "order_updated", updated);
@@ -635,6 +987,23 @@ app.patch("/vendor/menu/:id", requireVendor, asyncHandler(async (req, res) => {
   res.json({ menuItem: item });
 }));
 
+app.post("/vendor/menu/:id/photo", requireVendor, upload.single("photo"), asyncHandler(async (req, res) => {
+  const vendor = getAuthedVendor(req);
+  const item = menuItems.find((candidate) => candidate.vendorId === vendor?.id && candidate.id === req.params.id);
+  if (!item || !vendor) {
+    res.status(404).json({ error: "Menu item not found" });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: "Photo file is required" });
+    return;
+  }
+  const photoUrl = await uploadMenuPhoto(vendor.id, item.id, req.file);
+  item.photoUrl = photoUrl;
+  await persistState();
+  res.json({ menuItem: item });
+}));
+
 app.delete("/vendor/menu/:id", requireVendor, asyncHandler(async (req, res) => {
   const vendor = getAuthedVendor(req);
   const before = menuItems.length;
@@ -671,8 +1040,11 @@ app.get("/vendor/qr.png", requireVendor, asyncHandler(async (req, res) => {
 app.get("/vendor/dashboard", requireVendor, (req, res) => {
   const vendor = getAuthedVendor(req);
   const allOrders = vendor ? vendorOrders(vendor.id) : [];
-  const revenue = allOrders.filter((order) => order.status !== "CANCELLED").reduce((sum, order) => sum + order.totalAmount, 0);
-  res.json({ totalOrders: allOrders.length, revenue, recentOrders: allOrders.slice(0, 5) });
+  const revenue = allOrders.filter((order) => order.status === "COLLECTED").reduce((sum, order) => sum + order.totalAmount, 0);
+  const pendingSettlement = allOrders
+    .filter((order) => ["CONFIRMED", "PREPARING", "READY"].includes(order.status))
+    .reduce((sum, order) => sum + order.totalAmount, 0);
+  res.json({ totalOrders: allOrders.length, revenue, pendingSettlement, recentOrders: allOrders.slice(0, 5) });
 });
 
 app.get("/vendor/notifications", requireVendor, (req, res) => {
@@ -683,7 +1055,7 @@ app.get("/vendor/notifications", requireVendor, (req, res) => {
 
 io.on("connection", (socket) => {
   socket.on("join_vendor", (payload: { token: string }) => {
-    if (payload.token === vendorToken) {
+    if (payload.token === vendorToken && (!useMongo || process.env.ALLOW_DEV_VENDOR_TOKEN === "true")) {
       socket.join(`vendor:${vendors[0]?.id}`);
       return;
     }
@@ -698,6 +1070,10 @@ io.on("connection", (socket) => {
 });
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof multer.MulterError) {
+    res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Photo must be 2 MB or smaller" : error.message });
+    return;
+  }
   if (error instanceof ZodError) {
     res.status(400).json({ error: "Validation failed", details: error.flatten() });
     return;
@@ -708,6 +1084,11 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 export async function initialize() {
+  validateRuntimeConfig();
+  if (redisPubClient && redisSubClient) {
+    await Promise.all([redisPubClient.connect(), redisSubClient.connect()]);
+    io.adapter(createAdapter(redisPubClient, redisSubClient));
+  }
   if (useMongo) await connectMongo(mongoUri);
   await loadState();
   await persistState();

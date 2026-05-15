@@ -55,6 +55,7 @@ const orderSchema = new Schema(
     items: { type: [orderLineSchema], required: true },
     totalAmount: { type: Number, required: true },
     paymentId: { type: String },
+    paymentOrderId: { type: String, index: true },
     createdAt: { type: Date, default: Date.now },
     readyAt: { type: Date }
   },
