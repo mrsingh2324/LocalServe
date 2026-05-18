@@ -14,8 +14,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1047.0",
     "@localserve/shared-types": "file:../../packages/shared-types",
-    "@sendgrid/mail": "^8.1.6",
     "@socket.io/redis-adapter": "^8.3.0",
+    "nodemailer": "^7.0.10",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
@@ -42,6 +42,7 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^2.1.0",
     "@types/node": "^20.14.10",
+    "@types/nodemailer": "^7.0.4",
     "@types/pdfkit": "^0.17.6",
     "@types/qrcode": "^1.5.5",
     "@types/supertest": "^7.2.0",

@@ -4,8 +4,8 @@ import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import sgMail from "@sendgrid/mail";
 import multer from "multer";
+import nodemailer from "nodemailer";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -54,7 +54,7 @@ type StoredState = {
 
 const port = Number(process.env.PORT ?? 4000);
 const publicAppUrl = process.env.PUBLIC_APP_URL ?? "http://localhost:5173";
-const corsOrigin = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+const corsOrigin = process.env.CORS_ORIGIN ?? "*";
 const vendorToken = process.env.DEV_VENDOR_TOKEN ?? "dev-vendor-token";
 const jwtSecret = process.env.JWT_SECRET ?? "localserve-dev-secret-change-me";
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET ?? "localserve-dev-webhook-secret";
@@ -64,8 +64,12 @@ const platformFeePercent = Number(process.env.PLATFORM_FEE_PERCENT ?? 2);
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioFromPhone = process.env.TWILIO_FROM_PHONE;
-const sendgridApiKey = process.env.SENDGRID_API_KEY;
 const emailFrom = process.env.EMAIL_FROM ?? "orders@localserve.local";
+const smtpHost = process.env.SMTP_HOST;
+const smtpPort = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
+const smtpSecure = process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === "1";
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
 const redisUrl = process.env.REDIS_URL;
 const storageBucket = process.env.STORAGE_BUCKET;
 const storageEndpoint = process.env.STORAGE_ENDPOINT;
@@ -99,7 +103,14 @@ const upload = multer({
   }
 });
 
-if (sendgridApiKey) sgMail.setApiKey(sendgridApiKey);
+const mailTransporter = smtpHost && smtpPort
+  ? nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      auth: smtpUser && smtpPass ? { user: smtpUser, pass: smtpPass } : undefined
+    })
+  : undefined;
 
 function requireEnv(name: string, value: string | undefined) {
   if (!value) throw new Error(`Missing required production env var: ${name}`);
@@ -114,7 +125,10 @@ function validateRuntimeConfig() {
   requireEnv("TWILIO_ACCOUNT_SID", twilioAccountSid);
   requireEnv("TWILIO_AUTH_TOKEN", twilioAuthToken);
   requireEnv("TWILIO_FROM_PHONE", twilioFromPhone);
-  requireEnv("SENDGRID_API_KEY", sendgridApiKey);
+  requireEnv("SMTP_HOST", smtpHost);
+  requireEnv("SMTP_PORT", process.env.SMTP_PORT);
+  requireEnv("SMTP_USER", smtpUser);
+  requireEnv("SMTP_PASS", smtpPass);
   requireEnv("EMAIL_FROM", process.env.EMAIL_FROM);
   requireEnv("REDIS_URL", redisUrl);
   requireEnv("STORAGE_BUCKET", storageBucket);
@@ -199,9 +213,10 @@ const otpChallenges = new Map<string, { codeHash: string; expiresAt: number; att
 const app = express();
 const server = http.createServer(app);
 const corsAllowList = corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
+const allowAllCorsOrigins = corsAllowList.includes("*");
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (!origin || corsAllowList.includes(origin)) {
+    if (allowAllCorsOrigins || !origin || corsAllowList.includes(origin)) {
       callback(null, true);
       return;
     }
@@ -532,11 +547,11 @@ async function queueReadyNotification(order: Order) {
   };
   notifications.set(notification.id, notification);
 
-  if (!sendgridApiKey || process.env.NODE_ENV === "test") return notification;
+  if (!mailTransporter || process.env.NODE_ENV === "test") return notification;
 
   notification.attempts += 1;
   try {
-    await sgMail.send({
+    await mailTransporter.sendMail({
       to: notification.recipient,
       from: emailFrom,
       subject: notification.subject,
