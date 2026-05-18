@@ -11,6 +11,26 @@ const orderLineSchema = new Schema(
   { _id: false }
 );
 
+const deliveryAddressSchema = new Schema(
+  {
+    line1: { type: String, required: true },
+    city: { type: String, required: true },
+    pincode: { type: String, required: true }
+  },
+  { _id: false }
+);
+
+const savedAddressSchema = new Schema(
+  {
+    id: { type: String, required: true },
+    label: { type: String, required: true },
+    line1: { type: String, required: true },
+    city: { type: String, required: true },
+    pincode: { type: String, required: true }
+  },
+  { _id: false }
+);
+
 const vendorSchema = new Schema(
   {
     _id: { type: String, required: true },
@@ -21,7 +41,12 @@ const vendorSchema = new Schema(
     upiId: { type: String, required: true },
     qrUrl: { type: String, default: "" },
     passwordHash: { type: String, required: true },
-    tokenVersion: { type: Number, default: 1 }
+    tokenVersion: { type: Number, default: 1 },
+    category: { type: String, default: "General Store" },
+    isOpen: { type: Boolean, default: true },
+    deliveryEnabled: { type: Boolean, default: false },
+    deliveryFeeFlat: { type: Number, default: 0 },
+    bannerUrl: { type: String }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
 );
@@ -47,11 +72,16 @@ const orderSchema = new Schema(
     orderCode: { type: String, required: true },
     customerEmail: { type: String, required: true },
     customerPhone: { type: String },
+    customerId: { type: String, index: true },
     status: {
       type: String,
       enum: ["PENDING", "CONFIRMED", "PREPARING", "READY", "COLLECTED", "CANCELLED"],
       default: "PENDING"
     },
+    orderType: { type: String, enum: ["pickup", "delivery"], default: "pickup" },
+    deliveryAddress: { type: deliveryAddressSchema },
+    deliveryFee: { type: Number, default: 0 },
+    paymentMethod: { type: String, enum: ["online", "cash"], default: "online" },
     items: { type: [orderLineSchema], required: true },
     totalAmount: { type: Number, required: true },
     paymentId: { type: String },
@@ -84,10 +114,22 @@ const notificationSchema = new Schema(
 
 notificationSchema.index({ vendorId: 1, orderId: 1 });
 
+const customerSchema = new Schema(
+  {
+    _id: { type: String, required: true },
+    name: { type: String, required: true },
+    phone: { type: String, required: true, unique: true, index: true },
+    email: { type: String },
+    addresses: { type: [savedAddressSchema], default: [] }
+  },
+  { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
+);
+
 export const VendorModel = mongoose.model("Vendor", vendorSchema);
 export const MenuItemModel = mongoose.model("MenuItem", menuItemSchema);
 export const OrderModel = mongoose.model("Order", orderSchema);
 export const NotificationModel = mongoose.model("Notification", notificationSchema);
+export const CustomerModel = mongoose.model("Customer", customerSchema);
 
 export async function connectMongo(uri: string) {
   await mongoose.connect(uri, {

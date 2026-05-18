@@ -22,15 +22,17 @@ import { Server } from "socket.io";
 import twilio from "twilio";
 import { z, ZodError } from "zod";
 import {
+  CustomerModel,
   MenuItemModel,
   NotificationModel,
   OrderModel,
   VendorModel,
   connectMongo
 } from "./models.js";
-import type { MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DeliveryAddress, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
 
 type StoredVendor = Vendor & { passwordHash: string };
+type StoredCustomer = Customer & { passwordHash?: string };
 type NotificationRecord = {
   id: string;
   vendorId: string;
@@ -50,6 +52,7 @@ type StoredState = {
   menuItems: MenuItem[];
   orders: Order[];
   notifications?: NotificationRecord[];
+  customers?: StoredCustomer[];
 };
 
 const port = Number(process.env.PORT ?? 4000);
@@ -148,7 +151,11 @@ let vendors: StoredVendor[] = [
     upiId: "ravi@upi",
     qrUrl: "",
     storefrontUrl: `${publicAppUrl}/v/ravi-canteen`,
-    passwordHash: demoPasswordHash
+    passwordHash: demoPasswordHash,
+    category: "Food & Snacks",
+    isOpen: true,
+    deliveryEnabled: false,
+    deliveryFeeFlat: 0
   },
   {
     id: "vendor_meera",
@@ -159,7 +166,11 @@ let vendors: StoredVendor[] = [
     upiId: "meera@upi",
     qrUrl: "",
     storefrontUrl: `${publicAppUrl}/v/meera-tea-point`,
-    passwordHash: demoPasswordHash
+    passwordHash: demoPasswordHash,
+    category: "Tea & Coffee",
+    isOpen: true,
+    deliveryEnabled: true,
+    deliveryFeeFlat: 20
   }
 ];
 
@@ -206,6 +217,7 @@ let menuItems: MenuItem[] = [
   }
 ];
 
+let customers: StoredCustomer[] = [];
 const orders = new Map<string, Order>();
 const notifications = new Map<string, NotificationRecord>();
 const otpChallenges = new Map<string, { codeHash: string; expiresAt: number; attempts: number }>();
@@ -230,10 +242,20 @@ const io = new Server(server, {
   cors: corsOptions
 });
 
+// ── Schemas ──────────────────────────────────────────────────────────────────
+
 const createOrderBodySchema = z.object({
   vendorSlug: z.string(),
   customerEmail: z.string().email(),
   customerPhone: z.string().optional(),
+  customerId: z.string().optional(),
+  orderType: z.enum(["pickup", "delivery"]).default("pickup"),
+  deliveryAddress: z.object({
+    line1: z.string().min(1).max(200),
+    city: z.string().min(1).max(100),
+    pincode: z.string().min(4).max(10)
+  }).optional(),
+  paymentMethod: z.enum(["online", "cash"]).default("online"),
   items: z.array(z.object({ menuItemId: z.string(), quantity: z.number().int().positive() })).min(1)
 });
 const menuItemBodySchema = z.object({
@@ -255,7 +277,12 @@ const vendorRegistrationSchema = z.object({
 const vendorProfileSchema = z.object({
   name: z.string().min(2).max(120),
   locationTag: z.string().min(2).max(120),
-  upiId: z.string().min(3).max(80)
+  upiId: z.string().min(3).max(80),
+  category: z.string().min(1).max(60).optional(),
+  isOpen: z.boolean().optional(),
+  deliveryEnabled: z.boolean().optional(),
+  deliveryFeeFlat: z.number().nonnegative().optional(),
+  bannerUrl: z.string().url().optional().or(z.literal(""))
 });
 const loginSchema = z.object({
   phone: z.string().min(10),
@@ -268,6 +295,25 @@ const otpRequestSchema = z.object({
 const otpVerifySchema = z.object({
   phone: z.string().min(10).max(15),
   otpCode: z.string().min(4).max(8)
+});
+const customerOtpRequestSchema = z.object({
+  phone: z.string().min(10).max(15)
+});
+const customerOtpVerifySchema = z.object({
+  phone: z.string().min(10).max(15),
+  otpCode: z.string().min(4).max(8),
+  name: z.string().min(1).max(120).optional(),
+  email: z.string().email().optional()
+});
+const customerProfileSchema = z.object({
+  name: z.string().min(1).max(120),
+  email: z.string().email().optional().or(z.literal(""))
+});
+const customerAddressSchema = z.object({
+  label: z.string().min(1).max(40),
+  line1: z.string().min(1).max(200),
+  city: z.string().min(1).max(100),
+  pincode: z.string().min(4).max(10)
 });
 const paymentConfirmationSchema = z.object({
   razorpay_order_id: z.string(),
@@ -311,6 +357,10 @@ function createVendorToken(vendorId: string) {
   return jwt.sign({ vendorId, role: "vendor" }, jwtSecret, { expiresIn: "7d" });
 }
 
+function createCustomerToken(customerId: string) {
+  return jwt.sign({ customerId, role: "customer" }, jwtSecret, { expiresIn: "30d" });
+}
+
 function getVendorBySlug(slug: string) {
   return vendors.find((candidate) => candidate.slug === slug);
 }
@@ -319,10 +369,14 @@ function getVendorById(id: string) {
   return vendors.find((candidate) => candidate.id === id);
 }
 
+function getCustomerById(id: string) {
+  return customers.find((c) => c.id === id);
+}
+
 function ensureDemoSeeds() {
   const requiredVendors = [
-    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi" },
-    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi" }
+    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0 },
+    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20 }
   ];
   for (const seed of requiredVendors) {
     if (!vendors.some((vendor) => vendor.id === seed.id || vendor.phone === seed.phone)) {
@@ -342,7 +396,8 @@ function ensureDemoSeeds() {
 }
 
 function publicVendor(vendor: StoredVendor): Vendor {
-  return { ...vendor, passwordHash: undefined, storefrontUrl: `${publicAppUrl}/v/${vendor.slug}` } as Vendor;
+  const { passwordHash: _pw, ...rest } = vendor as StoredVendor & { passwordHash?: string };
+  return { ...rest, storefrontUrl: `${publicAppUrl}/v/${vendor.slug}` } as Vendor;
 }
 
 function publicStorefrontVendor(vendor: Vendor) {
@@ -352,15 +407,25 @@ function publicStorefrontVendor(vendor: Vendor) {
     slug: vendor.slug,
     locationTag: vendor.locationTag,
     qrUrl: vendor.qrUrl,
-    storefrontUrl: vendor.storefrontUrl
+    storefrontUrl: vendor.storefrontUrl,
+    category: vendor.category ?? "General Store",
+    isOpen: vendor.isOpen ?? true,
+    deliveryEnabled: vendor.deliveryEnabled ?? false,
+    deliveryFeeFlat: vendor.deliveryFeeFlat ?? 0,
+    bannerUrl: vendor.bannerUrl
   };
 }
 
-function otpKey(phone: string, purpose: "login" | "register") {
+function publicCustomer(customer: StoredCustomer): Customer {
+  const { passwordHash: _pw, ...rest } = customer as StoredCustomer & { passwordHash?: string };
+  return rest as Customer;
+}
+
+function otpKey(phone: string, purpose: string) {
   return `${purpose}:${phone}`;
 }
 
-function hashOtp(phone: string, purpose: "login" | "register", code: string) {
+function hashOtp(phone: string, purpose: string, code: string) {
   return crypto.createHmac("sha256", jwtSecret).update(`${purpose}:${phone}:${code}`).digest("hex");
 }
 
@@ -370,7 +435,7 @@ function createOtpCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-async function setOtpChallenge(phone: string, purpose: "login" | "register", challenge: { codeHash: string; expiresAt: number; attempts: number }) {
+async function setOtpChallenge(phone: string, purpose: string, challenge: { codeHash: string; expiresAt: number; attempts: number }) {
   const key = otpKey(phone, purpose);
   if (redisClient?.status === "ready") {
     await redisClient.set(key, JSON.stringify(challenge), "PX", otpTtlMs);
@@ -379,7 +444,7 @@ async function setOtpChallenge(phone: string, purpose: "login" | "register", cha
   otpChallenges.set(key, challenge);
 }
 
-async function getOtpChallenge(phone: string, purpose: "login" | "register") {
+async function getOtpChallenge(phone: string, purpose: string) {
   const key = otpKey(phone, purpose);
   if (redisClient?.status === "ready") {
     const raw = await redisClient.get(key);
@@ -388,7 +453,7 @@ async function getOtpChallenge(phone: string, purpose: "login" | "register") {
   return otpChallenges.get(key);
 }
 
-async function deleteOtpChallenge(phone: string, purpose: "login" | "register") {
+async function deleteOtpChallenge(phone: string, purpose: string) {
   const key = otpKey(phone, purpose);
   if (redisClient?.status === "ready") {
     await redisClient.del(key);
@@ -397,7 +462,7 @@ async function deleteOtpChallenge(phone: string, purpose: "login" | "register") 
   otpChallenges.delete(key);
 }
 
-async function updateOtpChallenge(phone: string, purpose: "login" | "register", challenge: { codeHash: string; expiresAt: number; attempts: number }) {
+async function updateOtpChallenge(phone: string, purpose: string, challenge: { codeHash: string; expiresAt: number; attempts: number }) {
   if (redisClient?.status === "ready") {
     await redisClient.set(otpKey(phone, purpose), JSON.stringify(challenge), "PX", Math.max(challenge.expiresAt - Date.now(), 1));
     return;
@@ -405,7 +470,7 @@ async function updateOtpChallenge(phone: string, purpose: "login" | "register", 
   otpChallenges.set(otpKey(phone, purpose), challenge);
 }
 
-async function sendOtp(phone: string, purpose: "login" | "register") {
+async function sendOtp(phone: string, purpose: string) {
   const code = createOtpCode();
   await setOtpChallenge(phone, purpose, {
     codeHash: hashOtp(phone, purpose, code),
@@ -417,14 +482,14 @@ async function sendOtp(phone: string, purpose: "login" | "register") {
     await twilioClient.messages.create({
       to: phone,
       from: twilioFromPhone,
-      body: `Your LocalServe ${purpose} OTP is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
+      body: `Your LocalServe OTP is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
     });
   }
 
   return code;
 }
 
-async function verifyOtp(phone: string, purpose: "login" | "register", code: string) {
+async function verifyOtp(phone: string, purpose: string, code: string) {
   const challenge = await getOtpChallenge(phone, purpose);
   if (!challenge || challenge.expiresAt < Date.now()) {
     await deleteOtpChallenge(phone, purpose);
@@ -451,6 +516,10 @@ function getAuthedVendor(req: express.Request) {
   return vendorId ? getVendorById(vendorId) : undefined;
 }
 
+function getAuthedCustomerId(req: express.Request): string | undefined {
+  return (req as express.Request & { customerId?: string }).customerId;
+}
+
 function requireVendor(req: express.Request, res: express.Response, next: express.NextFunction) {
   const auth = req.header("authorization");
   const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
@@ -473,6 +542,38 @@ function requireVendor(req: express.Request, res: express.Response, next: expres
   }
 
   res.status(401).json({ error: "Vendor authentication required" });
+}
+
+function requireCustomer(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.header("authorization");
+  const token = auth?.replace(/^Bearer\s+/i, "");
+  try {
+    const payload = jwt.verify(token ?? "", jwtSecret) as { customerId?: string; role?: string };
+    if (payload.customerId && payload.role === "customer" && getCustomerById(payload.customerId)) {
+      (req as express.Request & { customerId?: string }).customerId = payload.customerId;
+      next();
+      return;
+    }
+  } catch {
+    // Common auth error below.
+  }
+  res.status(401).json({ error: "Customer authentication required" });
+}
+
+function optionalCustomer(req: express.Request, _res: express.Response, next: express.NextFunction) {
+  const auth = req.header("authorization");
+  const token = auth?.replace(/^Bearer\s+/i, "");
+  if (token) {
+    try {
+      const payload = jwt.verify(token, jwtSecret) as { customerId?: string; role?: string };
+      if (payload.customerId && payload.role === "customer") {
+        (req as express.Request & { customerId?: string }).customerId = payload.customerId;
+      }
+    } catch {
+      // Optional — ignore invalid customer token
+    }
+  }
+  next();
 }
 
 function generateOrderCode(vendorId: string) {
@@ -517,6 +618,10 @@ function vendorMenu(vendorId: string, availableOnly = false) {
 
 function vendorOrders(vendorId: string) {
   return [...orders.values()].filter((order) => order.vendorId === vendorId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function customerOrders(customerId: string) {
+  return [...orders.values()].filter((order) => order.customerId === customerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 function expireStalePendingOrders() {
@@ -566,7 +671,7 @@ async function queueReadyNotification(order: Order) {
     channel: "email",
     recipient: order.customerEmail,
     subject: `Order #${order.orderCode} is ready`,
-    body: `Your order from ${vendor?.name ?? "LocalServe"} is ready for pickup. Show code ${order.orderCode} at the counter.`,
+    body: `Your order from ${vendor?.name ?? "LocalServe"} is ready for ${order.orderType === "delivery" ? "delivery" : "pickup"}. Show code ${order.orderCode} at the counter.`,
     status: "QUEUED",
     attempts: 0,
     createdAt: new Date().toISOString(),
@@ -603,11 +708,12 @@ async function confirmOrderPayment(order: Order, paymentId: string) {
 
 async function loadState() {
   if (useMongo) {
-    const [dbVendors, dbMenuItems, dbOrders, dbNotifications] = await Promise.all([
+    const [dbVendors, dbMenuItems, dbOrders, dbNotifications, dbCustomers] = await Promise.all([
       VendorModel.find().lean(),
       MenuItemModel.find().lean(),
       OrderModel.find().lean(),
-      NotificationModel.find().lean()
+      NotificationModel.find().lean(),
+      CustomerModel.find().lean()
     ]);
     if (dbVendors.length) {
       vendors = dbVendors.map((vendor) => ({
@@ -619,7 +725,12 @@ async function loadState() {
         upiId: vendor.upiId,
         qrUrl: vendor.qrUrl ?? "",
         storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`,
-        passwordHash: vendor.passwordHash ?? demoPasswordHash
+        passwordHash: vendor.passwordHash ?? demoPasswordHash,
+        category: (vendor as unknown as { category?: string }).category ?? "General Store",
+        isOpen: (vendor as unknown as { isOpen?: boolean }).isOpen ?? true,
+        deliveryEnabled: (vendor as unknown as { deliveryEnabled?: boolean }).deliveryEnabled ?? false,
+        deliveryFeeFlat: (vendor as unknown as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0,
+        bannerUrl: (vendor as unknown as { bannerUrl?: string }).bannerUrl
       }));
       menuItems = dbMenuItems.map((item) => ({
         id: String(item._id),
@@ -633,37 +744,66 @@ async function loadState() {
       }));
       orders.clear();
       for (const order of dbOrders) {
-        orders.set(String(order._id), {
-          id: String(order._id),
-          vendorId: order.vendorId,
-          orderCode: order.orderCode,
-          customerEmail: order.customerEmail,
-          customerPhone: order.customerPhone ?? undefined,
-          status: order.status as OrderStatus,
-          items: order.items as unknown as OrderLine[],
-          totalAmount: order.totalAmount,
-          paymentId: order.paymentId ?? undefined,
-          paymentOrderId: order.paymentOrderId ?? undefined,
-          createdAt: order.createdAt.toISOString(),
-          readyAt: order.readyAt?.toISOString()
+        const o = order as unknown as {
+          _id: unknown; vendorId: string; orderCode: string; customerEmail: string; customerPhone?: string;
+          customerId?: string; status: string; orderType?: string; deliveryAddress?: DeliveryAddress;
+          deliveryFee?: number; paymentMethod?: string; items: unknown; totalAmount: number;
+          paymentId?: string; paymentOrderId?: string; createdAt: Date; readyAt?: Date;
+        };
+        orders.set(String(o._id), {
+          id: String(o._id),
+          vendorId: o.vendorId,
+          orderCode: o.orderCode,
+          customerEmail: o.customerEmail,
+          customerPhone: o.customerPhone ?? undefined,
+          customerId: o.customerId ?? undefined,
+          status: o.status as OrderStatus,
+          orderType: (o.orderType ?? "pickup") as "pickup" | "delivery",
+          deliveryAddress: o.deliveryAddress,
+          deliveryFee: o.deliveryFee ?? 0,
+          paymentMethod: (o.paymentMethod ?? "online") as "online" | "cash",
+          items: o.items as unknown as OrderLine[],
+          totalAmount: o.totalAmount,
+          paymentId: o.paymentId ?? undefined,
+          paymentOrderId: o.paymentOrderId ?? undefined,
+          createdAt: o.createdAt.toISOString(),
+          readyAt: o.readyAt?.toISOString()
         });
       }
       notifications.clear();
       for (const notification of dbNotifications) {
-        notifications.set(String(notification._id), {
-          id: String(notification._id),
-          vendorId: notification.vendorId,
-          orderId: notification.orderId,
-          channel: notification.channel as "email" | "sms",
-          recipient: notification.recipient,
-          subject: notification.subject,
-          body: notification.body,
-          status: notification.status as "QUEUED" | "SENT" | "FAILED",
-          attempts: notification.attempts,
-          createdAt: notification.createdAt.toISOString(),
-          deliveredAt: notification.deliveredAt?.toISOString()
+        const n = notification as unknown as {
+          _id: unknown; vendorId: string; orderId: string; channel: string; recipient: string;
+          subject: string; body: string; status: string; attempts: number; createdAt: Date; deliveredAt?: Date;
+        };
+        notifications.set(String(n._id), {
+          id: String(n._id),
+          vendorId: n.vendorId,
+          orderId: n.orderId,
+          channel: n.channel as "email" | "sms",
+          recipient: n.recipient,
+          subject: n.subject,
+          body: n.body,
+          status: n.status as "QUEUED" | "SENT" | "FAILED",
+          attempts: n.attempts,
+          createdAt: n.createdAt.toISOString(),
+          deliveredAt: n.deliveredAt?.toISOString()
         });
       }
+      customers = dbCustomers.map((c) => {
+        const cust = c as unknown as {
+          _id: unknown; name: string; phone: string; email?: string;
+          addresses?: Address[]; createdAt: Date;
+        };
+        return {
+          id: String(cust._id),
+          name: cust.name,
+          phone: cust.phone,
+          email: cust.email,
+          addresses: cust.addresses ?? [],
+          createdAt: cust.createdAt.toISOString()
+        };
+      });
       ensureDemoSeeds();
       return;
     }
@@ -674,13 +814,14 @@ async function loadState() {
     if (parsed.vendors?.length) {
       vendors = parsed.vendors.map((vendor) => ({ ...vendor, storefrontUrl: `${publicAppUrl}/v/${vendor.slug}` }));
     } else if (parsed.vendor) {
-      vendors = [{ ...parsed.vendor, passwordHash: demoPasswordHash, storefrontUrl: `${publicAppUrl}/v/${parsed.vendor.slug}` }];
+      vendors = [{ ...parsed.vendor, passwordHash: demoPasswordHash, storefrontUrl: `${publicAppUrl}/v/${parsed.vendor.slug}`, category: "General Store", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0 }];
     }
     menuItems = parsed.menuItems ?? menuItems;
     orders.clear();
     for (const order of parsed.orders ?? []) orders.set(order.id, order);
     notifications.clear();
     for (const notification of parsed.notifications ?? []) notifications.set(notification.id, notification);
+    customers = parsed.customers ?? [];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("Could not load local data store; using seed data.", error);
   }
@@ -692,7 +833,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl } },
         { upsert: true }
       );
     }
@@ -713,12 +854,21 @@ async function persistState() {
         { upsert: true }
       );
     }
+    for (const customer of customers) {
+      await CustomerModel.updateOne(
+        { _id: customer.id },
+        { $set: { name: customer.name, phone: customer.phone, email: customer.email, addresses: customer.addresses } },
+        { upsert: true }
+      );
+    }
     return;
   }
 
   await fs.mkdir(path.dirname(dataFile), { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify({ vendors, menuItems, orders: [...orders.values()], notifications: [...notifications.values()] }, null, 2));
+  await fs.writeFile(dataFile, JSON.stringify({ vendors, menuItems, orders: [...orders.values()], notifications: [...notifications.values()], customers }, null, 2));
 }
+
+// ── Routes ───────────────────────────────────────────────────────────────────
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "localserve-api", storage: useMongo ? "mongoose-mongodb" : "local-json", realtime: "socket.io" });
@@ -727,6 +877,36 @@ app.get("/health", (_req, res) => {
 app.get("/demo-vendors", asyncHandler(async (_req, res) => {
   res.json({ vendors: await Promise.all(vendors.map(buildVendorResponse)) });
 }));
+
+// ── Shop Discovery ────────────────────────────────────────────────────────────
+
+app.get("/shops", asyncHandler(async (req, res) => {
+  const category = typeof req.query.category === "string" ? req.query.category : undefined;
+  const q = typeof req.query.q === "string" ? req.query.q.toLowerCase().trim() : undefined;
+  const deliveryOnly = req.query.deliveryOnly === "true";
+
+  let results = vendors;
+  if (category) results = results.filter((v) => v.category === category);
+  if (deliveryOnly) results = results.filter((v) => v.deliveryEnabled);
+  if (q) results = results.filter((v) => v.name.toLowerCase().includes(q) || v.locationTag.toLowerCase().includes(q) || (v.category ?? "").toLowerCase().includes(q));
+
+  const shopList = results.map((v) => ({
+    id: v.id,
+    name: v.name,
+    slug: v.slug,
+    locationTag: v.locationTag,
+    category: v.category ?? "General Store",
+    isOpen: v.isOpen ?? true,
+    deliveryEnabled: v.deliveryEnabled ?? false,
+    deliveryFeeFlat: v.deliveryFeeFlat ?? 0,
+    storefrontUrl: `${publicAppUrl}/v/${v.slug}`,
+    bannerUrl: v.bannerUrl
+  }));
+
+  res.json({ shops: shopList, total: shopList.length });
+}));
+
+// ── Vendor Auth ───────────────────────────────────────────────────────────────
 
 app.post("/auth/vendor/otp/request", authLimiter, asyncHandler(async (req, res) => {
   const body = otpRequestSchema.parse(req.body);
@@ -798,7 +978,11 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     phone: body.phone,
     locationTag: body.locationTag,
     upiId: body.upiId,
-    storefrontUrl: `${publicAppUrl}/v/${slug}`
+    storefrontUrl: `${publicAppUrl}/v/${slug}`,
+    category: "General Store",
+    isOpen: true,
+    deliveryEnabled: false,
+    deliveryFeeFlat: 0
   };
   vendors.push(vendor);
   await persistState();
@@ -825,11 +1009,125 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
     name: body.name,
     locationTag: body.locationTag,
     upiId: body.upiId,
-    storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`
+    storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`,
+    ...(body.category !== undefined && { category: body.category }),
+    ...(body.isOpen !== undefined && { isOpen: body.isOpen }),
+    ...(body.deliveryEnabled !== undefined && { deliveryEnabled: body.deliveryEnabled }),
+    ...(body.deliveryFeeFlat !== undefined && { deliveryFeeFlat: body.deliveryFeeFlat }),
+    ...(body.bannerUrl !== undefined && { bannerUrl: body.bannerUrl || undefined })
   });
   await persistState();
   res.json({ vendor: await buildVendorResponse(vendor) });
 }));
+
+// ── Customer Auth ─────────────────────────────────────────────────────────────
+
+app.post("/auth/customer/otp/request", authLimiter, asyncHandler(async (req, res) => {
+  const body = customerOtpRequestSchema.parse(req.body);
+  const code = await sendOtp(body.phone, "customer");
+  res.json({
+    status: "sent",
+    channel: twilioClient && process.env.NODE_ENV === "production" ? "sms" : "dev",
+    expiresInSeconds: Math.round(otpTtlMs / 1000),
+    ...(twilioClient && process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+  });
+}));
+
+app.post("/auth/customer/otp/verify", authLimiter, asyncHandler(async (req, res) => {
+  const body = customerOtpVerifySchema.parse(req.body);
+  if (!(await verifyOtp(body.phone, "customer", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+
+  let customer = customers.find((c) => c.phone === body.phone);
+  const isNew = !customer;
+
+  if (!customer) {
+    customer = {
+      id: crypto.randomUUID(),
+      name: body.name ?? "Customer",
+      phone: body.phone,
+      email: body.email,
+      addresses: [],
+      createdAt: new Date().toISOString()
+    };
+    customers.push(customer);
+    await persistState();
+  } else if (body.name && body.name !== "Customer") {
+    customer.name = body.name;
+    if (body.email) customer.email = body.email;
+    await persistState();
+  }
+
+  res.json({ customer: publicCustomer(customer), token: createCustomerToken(customer.id), isNew });
+}));
+
+app.get("/customer/me", requireCustomer, (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  res.json({ customer: publicCustomer(customer) });
+});
+
+app.patch("/customer/profile", requireCustomer, asyncHandler(async (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  const body = customerProfileSchema.parse(req.body);
+  customer.name = body.name;
+  if (body.email !== undefined) customer.email = body.email || undefined;
+  await persistState();
+  res.json({ customer: publicCustomer(customer) });
+}));
+
+app.post("/customer/addresses", requireCustomer, asyncHandler(async (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  const body = customerAddressSchema.parse(req.body);
+  const address: Address = { id: crypto.randomUUID(), ...body };
+  customer.addresses = [...(customer.addresses ?? []), address];
+  await persistState();
+  res.status(201).json({ address });
+}));
+
+app.delete("/customer/addresses/:id", requireCustomer, asyncHandler(async (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  customer.addresses = (customer.addresses ?? []).filter((a) => a.id !== req.params.id);
+  await persistState();
+  res.status(204).send();
+}));
+
+app.get("/customer/orders", requireCustomer, asyncHandler(async (req, res) => {
+  if (expireStalePendingOrders()) await persistState();
+  const customerId = getAuthedCustomerId(req);
+  if (!customerId) {
+    res.json({ orders: [] });
+    return;
+  }
+  const customerOrderList = customerOrders(customerId).map((order) => {
+    const vendor = getVendorById(order.vendorId);
+    return { ...order, vendorName: vendor?.name ?? "Shop" };
+  });
+  res.json({ orders: customerOrderList });
+}));
+
+// ── Payments ──────────────────────────────────────────────────────────────────
 
 app.post("/payments/razorpay/webhook", asyncHandler(async (req, res) => {
   const signature = req.header("x-razorpay-signature");
@@ -851,6 +1149,8 @@ app.post("/payments/razorpay/webhook", asyncHandler(async (req, res) => {
   res.json({ received: true });
 }));
 
+// ── Storefront ────────────────────────────────────────────────────────────────
+
 app.get("/v/:vendorSlug", asyncHandler(async (req, res) => {
   const vendor = getVendorBySlug(req.params.vendorSlug);
   if (!vendor) {
@@ -861,11 +1161,21 @@ app.get("/v/:vendorSlug", asyncHandler(async (req, res) => {
   res.json({ vendor: publicStorefrontVendor(vendorResponse), menuItems: vendorMenu(vendor.id, true) });
 }));
 
-app.post("/orders", asyncHandler(async (req, res) => {
+// ── Orders ────────────────────────────────────────────────────────────────────
+
+app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
   const body = createOrderBodySchema.parse(req.body);
   const vendor = getVendorBySlug(body.vendorSlug);
   if (!vendor) {
     res.status(404).json({ error: "Vendor not found" });
+    return;
+  }
+  if (body.orderType === "delivery" && !vendor.deliveryEnabled) {
+    res.status(400).json({ error: "This shop does not offer delivery" });
+    return;
+  }
+  if (body.orderType === "delivery" && !body.deliveryAddress) {
+    res.status(400).json({ error: "Delivery address is required for delivery orders" });
     return;
   }
 
@@ -875,22 +1185,33 @@ app.post("/orders", asyncHandler(async (req, res) => {
     return { menuItemId: menuItem.id, name: menuItem.name, quantity: cartItem.quantity, unitPrice: menuItem.price, lineTotal: menuItem.price * cartItem.quantity };
   });
 
-  const totalAmount = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const itemsTotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const deliveryFee = body.orderType === "delivery" ? (vendor.deliveryFeeFlat ?? 0) : 0;
+  const totalAmount = itemsTotal + deliveryFee;
+
+  const customerId = getAuthedCustomerId(req) ?? body.customerId;
+
+  const isCash = body.paymentMethod === "cash";
   const order: Order = {
     id: crypto.randomUUID(),
     vendorId: vendor.id,
     orderCode: generateOrderCode(vendor.id),
     customerEmail: body.customerEmail,
     customerPhone: body.customerPhone,
-    status: razorpayClient ? "PENDING" : "CONFIRMED",
+    customerId,
+    status: isCash || !razorpayClient ? "CONFIRMED" : "PENDING",
+    orderType: body.orderType,
+    deliveryAddress: body.deliveryAddress,
+    deliveryFee,
+    paymentMethod: body.paymentMethod,
     items: lines,
     totalAmount,
-    paymentId: razorpayClient ? undefined : `pay_test_${crypto.randomBytes(6).toString("hex")}`,
+    paymentId: isCash ? `cash_${crypto.randomBytes(6).toString("hex")}` : (razorpayClient ? undefined : `pay_test_${crypto.randomBytes(6).toString("hex")}`),
     createdAt: new Date().toISOString()
   };
 
   let razorpayOrder: { id: string; amount: number; currency: string } | undefined;
-  if (razorpayClient) {
+  if (!isCash && razorpayClient) {
     const providerOrder = await razorpayClient.orders.create({
       amount: Math.round(totalAmount * 100),
       currency: "INR",
@@ -907,7 +1228,7 @@ app.post("/orders", asyncHandler(async (req, res) => {
 
   orders.set(order.id, order);
   await persistState();
-  if (!razorpayClient) {
+  if (isCash || !razorpayClient) {
     io.to(`vendor:${vendor.id}`).emit("new_order", order);
     io.to(`order:${order.id}`).emit("order_updated", order);
   }
@@ -915,7 +1236,7 @@ app.post("/orders", asyncHandler(async (req, res) => {
     order,
     payment: razorpayOrder
       ? { mode: "live", status: "created", provider: "razorpay", keyId: razorpayKeyId, orderId: razorpayOrder.id, amount: razorpayOrder.amount, currency: razorpayOrder.currency }
-      : { mode: "test", status: "captured", provider: "razorpay-test" },
+      : { mode: isCash ? "cash" : "test", status: "captured", provider: isCash ? "cash" : "razorpay-test" },
     orderUrl: `${publicAppUrl}/order/${order.id}`
   });
 }));
@@ -933,6 +1254,55 @@ app.post("/orders/:id/confirm", asyncHandler(async (req, res) => {
   }
   const updated = await confirmOrderPayment(order, body.razorpay_payment_id);
   res.json({ order: updated, orderUrl: `${publicAppUrl}/order/${updated.id}` });
+}));
+
+app.post("/orders/:id/cancel", optionalCustomer, asyncHandler(async (req, res) => {
+  const order = orders.get(req.params.id);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  const customerId = getAuthedCustomerId(req);
+  const isOrderOwner = customerId && order.customerId === customerId;
+  const isVendor = (() => {
+    try {
+      const auth = req.header("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!auth) return false;
+      const payload = jwt.verify(auth, jwtSecret) as { vendorId?: string };
+      return payload.vendorId === order.vendorId;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!isOrderOwner && !isVendor) {
+    res.status(403).json({ error: "Not authorized to cancel this order" });
+    return;
+  }
+
+  const cancellableStatuses: OrderStatus[] = ["PENDING", "CONFIRMED"];
+  if (!cancellableStatuses.includes(order.status)) {
+    res.status(400).json({ error: `Cannot cancel an order with status ${order.status}` });
+    return;
+  }
+
+  let refundId: string | undefined;
+  if (razorpayClient && order.paymentId && !order.paymentId.startsWith("pay_test_") && !order.paymentId.startsWith("cash_")) {
+    try {
+      const refund = await razorpayClient.payments.refund(order.paymentId, { amount: Math.round(order.totalAmount * 100) });
+      refundId = refund.id;
+    } catch (refundError) {
+      console.error("Razorpay refund failed", refundError);
+    }
+  }
+
+  const cancelled: Order = { ...order, status: "CANCELLED" };
+  orders.set(cancelled.id, cancelled);
+  await persistState();
+  io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
+  io.to(`order:${order.id}`).emit("order_updated", cancelled);
+  res.json({ order: cancelled, refundId });
 }));
 
 app.get("/orders/:id", (req, res) => {
@@ -991,11 +1361,19 @@ app.get("/vendor/orders/:id/receipt.pdf", requireVendor, (req, res) => {
     doc.text(`${item.name} x${item.quantity}`, { continued: true });
     doc.text(`Rs. ${item.lineTotal}`, { align: "right" });
   }
+  if (order.deliveryFee) {
+    doc.text("Delivery fee", { continued: true });
+    doc.text(`Rs. ${order.deliveryFee}`, { align: "right" });
+  }
   doc.moveDown();
   doc.fontSize(14).text(`Total: Rs. ${order.totalAmount}`, { align: "right" });
   doc.moveDown();
-  doc.fontSize(10).fillColor("#555").text(`Payment: ${order.paymentId ?? "N/A"}`);
+  doc.fontSize(10).fillColor("#555").text(`Payment: ${order.paymentMethod === "cash" ? "Cash" : (order.paymentId ?? "N/A")}`);
+  doc.text(`Type: ${order.orderType === "delivery" ? "Delivery" : "Pickup"}`);
   doc.text(`Status: ${order.status}`);
+  if (order.deliveryAddress) {
+    doc.text(`Deliver to: ${order.deliveryAddress.line1}, ${order.deliveryAddress.city} - ${order.deliveryAddress.pincode}`);
+  }
   doc.end();
 });
 
@@ -1097,6 +1475,8 @@ app.get("/vendor/notifications", requireVendor, (req, res) => {
   res.json({ notifications: vendorNotifications });
 });
 
+// ── Socket.IO ─────────────────────────────────────────────────────────────────
+
 io.on("connection", (socket) => {
   socket.on("join_vendor", (payload: { token: string }) => {
     if (payload.token === vendorToken && (!useMongo || process.env.ALLOW_DEV_VENDOR_TOKEN === "true")) {
@@ -1112,6 +1492,8 @@ io.on("connection", (socket) => {
   });
   socket.on("join_order", (payload: { orderId: string }) => socket.join(`order:${payload.orderId}`));
 });
+
+// ── Error handler ─────────────────────────────────────────────────────────────
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof multer.MulterError) {
@@ -1144,8 +1526,8 @@ export async function initialize() {
 
 export function resetLocalState() {
   vendors = [
-    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/ravi-canteen`, passwordHash: demoPasswordHash },
-    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/meera-tea-point`, passwordHash: demoPasswordHash }
+    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/ravi-canteen`, passwordHash: demoPasswordHash, category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0 },
+    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/meera-tea-point`, passwordHash: demoPasswordHash, category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20 }
   ];
   menuItems = menuItems.filter(() => false);
   menuItems.push(
@@ -1156,6 +1538,7 @@ export function resetLocalState() {
   );
   orders.clear();
   notifications.clear();
+  customers = [];
 }
 
 export { app };
