@@ -1,4 +1,4 @@
-import type { MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
@@ -10,8 +10,24 @@ export function setStoredVendorToken(token: string) {
   localStorage.setItem("localserve_vendor_token", token);
 }
 
-function authHeaders() {
+export function getStoredCustomerToken() {
+  return localStorage.getItem("localserve_customer_token") ?? "";
+}
+
+export function setStoredCustomerToken(token: string) {
+  localStorage.setItem("localserve_customer_token", token);
+}
+
+export function clearStoredCustomerToken() {
+  localStorage.removeItem("localserve_customer_token");
+}
+
+function vendorAuthHeaders() {
   return { authorization: `Bearer ${getStoredVendorToken()}` };
+}
+
+function customerAuthHeaders() {
+  return { authorization: `Bearer ${getStoredCustomerToken()}` };
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -40,9 +56,40 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// ── Storefront ────────────────────────────────────────────────────────────────
+
 export function getStorefront(slug: string) {
-  return request<{ vendor: PublicVendor; menuItems: MenuItem[] }>(`/v/${slug}`);
+  return request<{
+    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string };
+    menuItems: MenuItem[]
+  }>(`/v/${slug}`);
 }
+
+// ── Shop Discovery ────────────────────────────────────────────────────────────
+
+export type ShopSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  locationTag: string;
+  category: string;
+  isOpen: boolean;
+  deliveryEnabled: boolean;
+  deliveryFeeFlat: number;
+  storefrontUrl: string;
+  bannerUrl?: string;
+};
+
+export function getShops(params?: { category?: string; q?: string; deliveryOnly?: boolean }) {
+  const qs = new URLSearchParams();
+  if (params?.category) qs.set("category", params.category);
+  if (params?.q) qs.set("q", params.q);
+  if (params?.deliveryOnly) qs.set("deliveryOnly", "true");
+  const query = qs.toString();
+  return request<{ shops: ShopSummary[]; total: number }>(`/shops${query ? `?${query}` : ""}`);
+}
+
+// ── Vendor Auth ───────────────────────────────────────────────────────────────
 
 export function registerVendor(payload: { name: string; phone: string; locationTag: string; upiId: string; otpCode: string; password?: string }) {
   return request<{ vendor: Vendor; token: string }>("/vendor/register", {
@@ -78,22 +125,88 @@ export function getDemoVendors() {
 
 export function getVendorMe() {
   return request<{ vendor: Vendor }>("/vendor/me", {
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
 
-export function updateVendorProfile(payload: { name: string; locationTag: string; upiId: string }) {
+export function updateVendorProfile(payload: {
+  name: string;
+  locationTag: string;
+  upiId: string;
+  category?: string;
+  isOpen?: boolean;
+  deliveryEnabled?: boolean;
+  deliveryFeeFlat?: number;
+  bannerUrl?: string;
+}) {
   return request<{ vendor: Vendor }>("/vendor/profile", {
     method: "PATCH",
-    headers: authHeaders(),
+    headers: vendorAuthHeaders(),
     body: JSON.stringify(payload)
   });
 }
+
+// ── Customer Auth ─────────────────────────────────────────────────────────────
+
+export function requestCustomerOtp(phone: string) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/customer/otp/request", {
+    method: "POST",
+    body: JSON.stringify({ phone })
+  });
+}
+
+export function verifyCustomerOtp(payload: { phone: string; otpCode: string; name?: string; email?: string }) {
+  return request<{ customer: Customer; token: string; isNew: boolean }>("/auth/customer/otp/verify", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getCustomerMe() {
+  return request<{ customer: Customer }>("/customer/me", {
+    headers: customerAuthHeaders()
+  });
+}
+
+export function updateCustomerProfile(payload: { name: string; email?: string }) {
+  return request<{ customer: Customer }>("/customer/profile", {
+    method: "PATCH",
+    headers: customerAuthHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export function addCustomerAddress(payload: { label: string; line1: string; city: string; pincode: string }) {
+  return request<{ address: Address }>("/customer/addresses", {
+    method: "POST",
+    headers: customerAuthHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteCustomerAddress(id: string) {
+  return request<void>(`/customer/addresses/${id}`, {
+    method: "DELETE",
+    headers: customerAuthHeaders()
+  });
+}
+
+export function getCustomerOrders() {
+  return request<{ orders: (Order & { vendorName: string })[] }>("/customer/orders", {
+    headers: customerAuthHeaders()
+  });
+}
+
+// ── Orders ────────────────────────────────────────────────────────────────────
 
 export function createOrder(payload: {
   vendorSlug: string;
   customerEmail: string;
   customerPhone?: string;
+  customerId?: string;
+  orderType: "pickup" | "delivery";
+  deliveryAddress?: { line1: string; city: string; pincode: string };
+  paymentMethod: "online" | "cash";
   items: { menuItemId: string; quantity: number }[];
 }) {
   return request<{
@@ -102,6 +215,7 @@ export function createOrder(payload: {
     payment: { mode: string; status: string; provider: string; keyId?: string; orderId?: string; amount?: number; currency?: string };
   }>("/orders", {
     method: "POST",
+    headers: getStoredCustomerToken() ? customerAuthHeaders() : {},
     body: JSON.stringify(payload)
   });
 }
@@ -116,13 +230,23 @@ export function confirmOrderPayment(
   });
 }
 
+export function cancelOrder(id: string) {
+  const token = getStoredCustomerToken() || getStoredVendorToken();
+  return request<{ order: Order; refundId?: string }>(`/orders/${id}/cancel`, {
+    method: "POST",
+    headers: token ? { authorization: `Bearer ${token}` } : {}
+  });
+}
+
 export function getOrder(id: string) {
   return request<{ order: Order; vendor: { name: string; locationTag: string } }>(`/orders/${id}`);
 }
 
+// ── Vendor Orders & Menu ──────────────────────────────────────────────────────
+
 export function getVendorOrders() {
   return request<{ orders: Order[] }>("/vendor/orders", {
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
 
@@ -131,7 +255,7 @@ export function updateOrderStatus(id: string, status: OrderStatus) {
     `/orders/${id}/status`,
     {
       method: "PATCH",
-      headers: authHeaders(),
+      headers: vendorAuthHeaders(),
       body: JSON.stringify({ status })
     }
   );
@@ -139,20 +263,20 @@ export function updateOrderStatus(id: string, status: OrderStatus) {
 
 export function getVendorQr() {
   return request<{ vendor: Vendor }>("/vendor/qr", {
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
 
 export function getVendorMenu() {
   return request<{ menuItems: MenuItem[] }>("/vendor/menu", {
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
 
 export function createMenuItem(payload: Omit<MenuItem, "id" | "vendorId">) {
   return request<{ menuItem: MenuItem }>("/vendor/menu", {
     method: "POST",
-    headers: authHeaders(),
+    headers: vendorAuthHeaders(),
     body: JSON.stringify(payload)
   });
 }
@@ -160,7 +284,7 @@ export function createMenuItem(payload: Omit<MenuItem, "id" | "vendorId">) {
 export function updateMenuItem(id: string, payload: Partial<MenuItem>) {
   return request<{ menuItem: MenuItem }>(`/vendor/menu/${id}`, {
     method: "PATCH",
-    headers: authHeaders(),
+    headers: vendorAuthHeaders(),
     body: JSON.stringify(payload)
   });
 }
@@ -170,7 +294,7 @@ export async function uploadMenuItemPhoto(id: string, file: File) {
   formData.append("photo", file);
   const response = await fetch(`${API_URL}/vendor/menu/${id}/photo`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: vendorAuthHeaders(),
     body: formData
   });
   if (!response.ok) throw new Error(await response.text());
@@ -180,12 +304,12 @@ export async function uploadMenuItemPhoto(id: string, file: File) {
 export function deleteMenuItem(id: string) {
   return request<void>(`/vendor/menu/${id}`, {
     method: "DELETE",
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
 
 export function getDashboard() {
   return request<{ totalOrders: number; revenue: number; pendingSettlement: number; recentOrders: Order[] }>("/vendor/dashboard", {
-    headers: authHeaders()
+    headers: vendorAuthHeaders()
   });
 }
