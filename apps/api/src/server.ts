@@ -81,7 +81,13 @@ const twilioFromPhone = process.env.TWILIO_FROM_PHONE;
 const emailFrom = process.env.EMAIL_FROM ?? "orders@localserve.local";
 const smtpHost = process.env.SMTP_HOST;
 const smtpPort = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
-const smtpSecure = process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === "1";
+// Honour an explicit SMTP_SECURE flag; otherwise derive it from the port
+// (465 = implicit TLS, 587/25 = STARTTLS). This avoids a common misconfig
+// where port 465 is used without SMTP_SECURE set, causing the TLS handshake
+// to fail and every email send to throw.
+const smtpSecure = process.env.SMTP_SECURE !== undefined
+  ? process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === "1"
+  : smtpPort === 465;
 const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 const redisUrl = process.env.REDIS_URL;
@@ -130,7 +136,10 @@ const mailTransporter = smtpHost && smtpPort
       host: smtpHost,
       port: smtpPort,
       secure: smtpSecure,
-      auth: smtpUser && smtpPass ? { user: smtpUser, pass: smtpPass } : undefined
+      auth: smtpUser && smtpPass ? { user: smtpUser, pass: smtpPass } : undefined,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000
     })
   : undefined;
 
@@ -516,33 +525,35 @@ function createOtpCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function createEmailOtpCode() {
-  if (process.env.NODE_ENV !== "production") return otpDevCode;
-  if (!mailTransporter) throw Object.assign(new Error("Email delivery is not configured for production OTP"), { status: 503 });
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-async function sendEmailOtp(email: string, purpose: string) {
-  const code = createEmailOtpCode();
+async function sendEmailOtp(email: string, purpose: string): Promise<{ code: string; delivered: boolean }> {
+  const code = process.env.NODE_ENV === "production"
+    ? String(Math.floor(100000 + Math.random() * 900000))
+    : otpDevCode;
   await setOtpChallenge(email, purpose, {
     codeHash: hashOtp(email, purpose, code),
     expiresAt: Date.now() + otpTtlMs,
     attempts: 0
   });
-  if (mailTransporter) {
-    try {
-      await mailTransporter.sendMail({
-        to: email,
-        from: emailFrom,
-        subject: "Your QuickOrder login code",
-        text: `Your QuickOrder login code is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
-      });
-    } catch (error) {
-      if (process.env.NODE_ENV === "production") throw error;
-      console.warn("Email OTP delivery failed (dev mode)", error);
+
+  if (!mailTransporter) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("Email OTP requested but SMTP is not configured (set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS)");
     }
+    return { code, delivered: false };
   }
-  return code;
+
+  try {
+    await mailTransporter.sendMail({
+      to: email,
+      from: emailFrom,
+      subject: "Your QuickOrder login code",
+      text: `Your QuickOrder login code is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
+    });
+    return { code, delivered: true };
+  } catch (error) {
+    console.error("Email OTP delivery failed", error);
+    return { code, delivered: false };
+  }
 }
 
 async function setOtpChallenge(phone: string, purpose: string, challenge: { codeHash: string; expiresAt: number; attempts: number }) {
@@ -1192,7 +1203,11 @@ app.post("/auth/vendor/email/otp/request", authLimiter, asyncHandler(async (req,
     res.status(404).json({ error: "No shop is registered with this email. Add an email in your shop profile first." });
     return;
   }
-  const code = await sendEmailOtp(normalized, "vendor-email");
+  const { code, delivered } = await sendEmailOtp(normalized, "vendor-email");
+  if (process.env.NODE_ENV === "production" && !delivered) {
+    res.status(502).json({ error: "We couldn't send the login email right now. Please try again shortly or log in with your mobile number." });
+    return;
+  }
   res.json({
     status: "sent",
     channel: "email",
@@ -1471,7 +1486,11 @@ app.post("/auth/customer/otp/verify", authLimiter, asyncHandler(async (req, res)
 
 app.post("/auth/customer/email/otp/request", authLimiter, asyncHandler(async (req, res) => {
   const { email } = emailOtpRequestSchema.parse(req.body);
-  const code = await sendEmailOtp(email.toLowerCase(), "customer-email");
+  const { code, delivered } = await sendEmailOtp(email.toLowerCase(), "customer-email");
+  if (process.env.NODE_ENV === "production" && !delivered) {
+    res.status(502).json({ error: "We couldn't send the login email right now. Please try again shortly or continue with your mobile number." });
+    return;
+  }
   res.json({
     status: "sent",
     channel: "email",
@@ -1989,6 +2008,12 @@ export async function initialize() {
   if (useMongo) await connectMongo(mongoUri);
   await loadState();
   await persistState();
+  if (mailTransporter) {
+    mailTransporter
+      .verify()
+      .then(() => console.log("SMTP transport verified — email delivery is ready"))
+      .catch((error) => console.error("SMTP transport verification failed — email OTP and notifications will not be delivered", error));
+  }
 }
 
 export function resetLocalState() {
