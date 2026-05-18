@@ -214,9 +214,12 @@ const app = express();
 const server = http.createServer(app);
 const corsAllowList = corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
 const allowAllCorsOrigins = corsAllowList.includes("*");
+const corsOriginPatterns = corsAllowList
+  .filter((origin) => origin.includes("*") && origin !== "*")
+  .map((origin) => new RegExp(`^${origin.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`));
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (allowAllCorsOrigins || !origin || corsAllowList.includes(origin)) {
+    if (allowAllCorsOrigins || !origin || corsAllowList.includes(origin) || corsOriginPatterns.some((pattern) => pattern.test(origin))) {
       callback(null, true);
       return;
     }
