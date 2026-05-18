@@ -2,42 +2,55 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import type { Address, Customer, MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
 import {
   API_URL,
+  type AdminMetrics,
+  type AdminVendor,
   type ShopSummary,
+  addCustomerAddress,
+  adminLogin,
   cancelOrder,
+  clearStoredAdminToken,
   clearStoredCustomerToken,
   confirmOrderPayment,
   createMenuItem,
   createOrder,
   deleteCustomerAddress,
   deleteMenuItem,
+  getAdminMetrics,
+  getAdminOrders,
+  getAdminVendors,
   getDashboard,
   getDemoVendors,
   getCustomerMe,
   getCustomerOrders,
   getOrder,
   getShops,
+  getStoredAdminToken,
   getStoredCustomerToken,
   getStoredVendorToken,
   getStorefront,
+  getVapidPublicKey,
   getVendorMe,
   getVendorMenu,
   getVendorOrders,
   getVendorQr,
-  addCustomerAddress,
   registerVendor,
   requestCustomerOtp,
   requestVendorOtp,
+  setStoredAdminToken,
   setStoredCustomerToken,
   setStoredVendorToken,
+  submitVendorKyc,
+  subscribeToPush,
   updateCustomerProfile,
   updateMenuItem,
   updateOrderStatus,
   updateVendorProfile,
   uploadMenuItemPhoto,
   verifyCustomerOtp,
+  verifyVendor,
   verifyVendorOtp
 } from "./api";
 import { buildCartLines, useCartStore } from "./cartStore";
@@ -57,6 +70,12 @@ const SHOP_CATEGORIES = [
   "Electronics",
   "Other"
 ];
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function defaultOperatingHours(): DayHours[] {
+  return Array.from({ length: 7 }, () => ({ closed: false, open: "09:00", close: "21:00" }));
+}
 
 declare global {
   interface Window {
@@ -132,6 +151,40 @@ function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from(Array.from(raw, (char) => char.charCodeAt(0)));
+}
+
+async function enablePushForOrder(orderId: string, customerId?: string) {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    throw new Error("Push notifications are not supported in this browser");
+  }
+  const { key } = await getVapidPublicKey();
+  if (!key) throw new Error("Push notifications are not configured on the server");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Notification permission was denied");
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key)
+    });
+  }
+  const json = subscription.toJSON();
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+    throw new Error("Could not read push subscription");
+  }
+  await subscribeToPush({
+    subscription: { endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
+    orderId,
+    customerId
+  });
+}
+
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
   if (!message) return null;
   return (
@@ -189,6 +242,7 @@ function App() {
           <Route path="/v/:slug" element={<CustomerStorefront />} />
           <Route path="/order/:orderId" element={<OrderStatusPage />} />
           <Route path="/vendor" element={<VendorConsole />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
@@ -320,7 +374,10 @@ function HomePage() {
                       {shop.isOpen ? "Open" : "Closed"}
                     </span>
                   </div>
-                  <h3>{shop.name}</h3>
+                  <h3>
+                    {shop.name}
+                    {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
+                  </h3>
                   <p className="shop-location">{shop.locationTag}</p>
                   {shop.deliveryEnabled ? (
                     <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
@@ -720,7 +777,10 @@ function CustomerStorefront() {
               {(vendor as { isOpen?: boolean }).isOpen ? "Open" : "Closed"}
             </span>
           </p>
-          <h1>{(vendor as { name?: string }).name}</h1>
+          <h1>
+            {(vendor as { name?: string }).name}
+            {(vendor as { verified?: boolean }).verified ? <span className="verified-tick hero-tick" title="Verified shop">✓</span> : null}
+          </h1>
           <p>{(vendor as { locationTag?: string }).locationTag}</p>
           {deliveryEnabled ? (
             <p className="hero-delivery-note">Delivery available · ₹{(vendor as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0} delivery fee</p>
@@ -738,25 +798,30 @@ function CustomerStorefront() {
               <span>{menuItems.length} available</span>
             </div>
             <div className="menu-grid">
-              {menuItems.map((item) => (
-                <article className="menu-card" key={item.id}>
-                  <img src={item.photoUrl} alt="" />
-                  <div className="menu-card-body">
-                    <div>
-                      <p className="category">{item.category}</p>
-                      <h3>{item.name}</h3>
-                      <p>{item.description}</p>
+              {menuItems.map((item) => {
+                const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
+                const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
+                return (
+                  <article className="menu-card" key={item.id}>
+                    <img src={item.photoUrl} alt="" />
+                    <div className="menu-card-body">
+                      <div>
+                        <p className="category">{item.category}</p>
+                        <h3>{item.name}</h3>
+                        <p>{item.description}</p>
+                        {lowStock ? <span className="low-stock-badge">Only {item.stockQuantity} left</span> : null}
+                      </div>
+                      <div className="menu-action">
+                        <strong>₹{item.price}</strong>
+                        <QuantityControl
+                          value={quantities[item.id] ?? 0}
+                          onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
+                        />
+                      </div>
                     </div>
-                    <div className="menu-action">
-                      <strong>₹{item.price}</strong>
-                      <QuantityControl
-                        value={quantities[item.id] ?? 0}
-                        onChange={(quantity) => setQuantity(item.id, quantity)}
-                      />
-                    </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </section>
 
@@ -941,6 +1006,7 @@ function OrderStatusPage() {
   const [order, setOrder] = React.useState<Order | null>(null);
   const [vendor, setVendor] = React.useState<{ name: string; locationTag: string } | null>(null);
   const [cancelling, setCancelling] = React.useState(false);
+  const [pushState, setPushState] = React.useState<"idle" | "enabling" | "enabled">("idle");
   const [error, setError] = React.useState("");
 
   React.useEffect(() => {
@@ -972,10 +1038,24 @@ function OrderStatusPage() {
     }
   }
 
+  async function handleEnablePush() {
+    if (!orderId) return;
+    setPushState("enabling");
+    setError("");
+    try {
+      await enablePushForOrder(orderId, customer?.id);
+      setPushState("enabled");
+    } catch (err) {
+      setPushState("idle");
+      setError(messageFromError(err));
+    }
+  }
+
   if (!order || !vendor) return <Shell><div className="empty">Loading order...</div></Shell>;
 
   const isOwner = customer && order.customerId === customer.id;
   const canCancel = isOwner && ["PENDING", "CONFIRMED"].includes(order.status);
+  const orderLive = !["COLLECTED", "CANCELLED"].includes(order.status);
 
   return (
     <Shell>
@@ -1012,6 +1092,18 @@ function OrderStatusPage() {
 
         <ErrorBanner message={error} onDismiss={() => setError("")} />
 
+        {orderLive ? (
+          <div className="push-optin">
+            {pushState === "enabled" ? (
+              <p className="muted small">✓ Notifications on — we'll alert you when this order updates.</p>
+            ) : (
+              <button className="quiet-button push-button" onClick={handleEnablePush} disabled={pushState === "enabling"}>
+                {pushState === "enabling" ? "Enabling..." : "🔔 Notify me on updates"}
+              </button>
+            )}
+          </div>
+        ) : null}
+
         {canCancel ? (
           <button className="danger-button" style={{ marginTop: 16 }} onClick={handleCancel} disabled={cancelling}>
             {cancelling ? "Cancelling..." : "Cancel order"}
@@ -1046,7 +1138,9 @@ function VendorConsole() {
     category: "Food & Snacks",
     isOpen: true,
     deliveryEnabled: false,
-    deliveryFeeFlat: "0"
+    deliveryFeeFlat: "0",
+    operatingHours: defaultOperatingHours(),
+    acceptWindowMinutes: "15"
   });
   const [menuDraft, setMenuDraft] = React.useState({
     id: "",
@@ -1055,7 +1149,8 @@ function VendorConsole() {
     price: "50",
     photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80",
     category: "Snacks",
-    isAvailable: true
+    isAvailable: true,
+    stockQuantity: ""
   });
   const [menuPhotoFile, setMenuPhotoFile] = React.useState<File | null>(null);
   const [issuedToken, setIssuedToken] = React.useState("");
@@ -1100,7 +1195,9 @@ function VendorConsole() {
             category: data.vendor.category ?? "Food & Snacks",
             isOpen: data.vendor.isOpen ?? true,
             deliveryEnabled: data.vendor.deliveryEnabled ?? false,
-            deliveryFeeFlat: String(data.vendor.deliveryFeeFlat ?? 0)
+            deliveryFeeFlat: String(data.vendor.deliveryFeeFlat ?? 0),
+            operatingHours: data.vendor.operatingHours ?? defaultOperatingHours(),
+            acceptWindowMinutes: String(data.vendor.acceptWindowMinutes ?? 15)
           }));
           refresh();
           socket.emit("join_vendor", { token });
@@ -1147,7 +1244,8 @@ function VendorConsole() {
       price: Number(menuDraft.price),
       photoUrl: menuDraft.photoUrl,
       category: menuDraft.category,
-      isAvailable: menuDraft.isAvailable
+      isAvailable: menuDraft.isAvailable,
+      stockQuantity: menuDraft.stockQuantity.trim() === "" ? undefined : Number(menuDraft.stockQuantity)
     };
     try {
       if (menuDraft.id) {
@@ -1159,7 +1257,7 @@ function VendorConsole() {
         if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
         setMenu((current) => [response.menuItem, ...current]);
       }
-      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true });
+      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true, stockQuantity: "" });
       setMenuPhotoFile(null);
     } catch (menuError) {
       setError(messageFromError(menuError));
@@ -1185,7 +1283,8 @@ function VendorConsole() {
       price: String(item.price),
       photoUrl: item.photoUrl,
       category: item.category,
-      isAvailable: item.isAvailable
+      isAvailable: item.isAvailable,
+      stockQuantity: typeof item.stockQuantity === "number" ? String(item.stockQuantity) : ""
     });
   }
 
@@ -1232,7 +1331,9 @@ function VendorConsole() {
         category: response.vendor.category ?? "Food & Snacks",
         isOpen: response.vendor.isOpen ?? true,
         deliveryEnabled: response.vendor.deliveryEnabled ?? false,
-        deliveryFeeFlat: String(response.vendor.deliveryFeeFlat ?? 0)
+        deliveryFeeFlat: String(response.vendor.deliveryFeeFlat ?? 0),
+        operatingHours: response.vendor.operatingHours ?? defaultOperatingHours(),
+        acceptWindowMinutes: String(response.vendor.acceptWindowMinutes ?? 15)
       }));
       socket.emit("join_vendor", { token: response.token });
       refresh();
@@ -1267,7 +1368,9 @@ function VendorConsole() {
         category: profileDraft.category,
         isOpen: profileDraft.isOpen,
         deliveryEnabled: profileDraft.deliveryEnabled,
-        deliveryFeeFlat: Number(profileDraft.deliveryFeeFlat)
+        deliveryFeeFlat: Number(profileDraft.deliveryFeeFlat),
+        operatingHours: profileDraft.operatingHours,
+        acceptWindowMinutes: Number(profileDraft.acceptWindowMinutes)
       });
       setVendor(response.vendor);
     } catch (profileError) {
@@ -1513,9 +1616,66 @@ function VendorConsole() {
                   <input type="number" min="0" value={profileDraft.deliveryFeeFlat} onChange={(e) => setProfileDraft((d) => ({ ...d, deliveryFeeFlat: e.target.value }))} />
                 </label>
               ) : null}
+
+              <div className="hours-editor">
+                <p className="hours-title">Weekly operating hours</p>
+                <p className="muted small">Customers can only order while the shop is within these hours. The "Shop is open" toggle above can force-close it anytime.</p>
+                {profileDraft.operatingHours.map((day, index) => (
+                  <div className="hours-row" key={DAY_NAMES[index]}>
+                    <span className="hours-day">{DAY_NAMES[index]}</span>
+                    <label className="checkbox-row hours-closed">
+                      <input
+                        type="checkbox"
+                        checked={day.closed}
+                        onChange={(e) => setProfileDraft((d) => ({
+                          ...d,
+                          operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, closed: e.target.checked } : h)
+                        }))}
+                      />
+                      Closed
+                    </label>
+                    {!day.closed ? (
+                      <div className="hours-times">
+                        <input
+                          type="time"
+                          value={day.open}
+                          onChange={(e) => setProfileDraft((d) => ({
+                            ...d,
+                            operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, open: e.target.value } : h)
+                          }))}
+                        />
+                        <span>to</span>
+                        <input
+                          type="time"
+                          value={day.close}
+                          onChange={(e) => setProfileDraft((d) => ({
+                            ...d,
+                            operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, close: e.target.value } : h)
+                          }))}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+
+              <label>
+                Order acceptance window (minutes)
+                <input
+                  type="number"
+                  min="1"
+                  max="240"
+                  value={profileDraft.acceptWindowMinutes}
+                  onChange={(e) => setProfileDraft((d) => ({ ...d, acceptWindowMinutes: e.target.value }))}
+                />
+              </label>
+              <p className="muted small">Confirmed orders not started within this window are auto-cancelled (online payments are refunded).</p>
+
               <button>Update profile</button>
             </form>
           </section>
+
+          {vendor ? <VendorKycPanel vendor={vendor} onUpdated={setVendor} /> : null}
 
           <section className="panel" id="shop-summary">
             <h2>Today&apos;s summary</h2>
@@ -1562,27 +1722,50 @@ function VendorConsole() {
                 Category
                 <input value={menuDraft.category} onChange={(event) => setMenuDraft((draft) => ({ ...draft, category: event.target.value }))} />
               </label>
+              <label>
+                Stock quantity
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Leave blank for unlimited"
+                  value={menuDraft.stockQuantity}
+                  onChange={(event) => setMenuDraft((draft) => ({ ...draft, stockQuantity: event.target.value }))}
+                />
+              </label>
               <label className="checkbox-row">
                 <input type="checkbox" checked={menuDraft.isAvailable} onChange={(event) => setMenuDraft((draft) => ({ ...draft, isAvailable: event.target.checked }))} />
                 Available
               </label>
               <button disabled={!isLoggedIn}>{menuDraft.id ? "Update item" : "Add item"}</button>
             </form>
-            {menu.map((item) => (
-              <div className="menu-toggle" key={item.id}>
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>₹{item.price}</span>
+            {menu.map((item) => {
+              const tracked = typeof item.stockQuantity === "number";
+              const outOfStock = tracked && item.stockQuantity === 0;
+              return (
+                <div className="menu-toggle" key={item.id}>
+                  <div>
+                    <strong>{item.name}</strong>
+                    <span>
+                      ₹{item.price}
+                      {tracked ? (
+                        <span className={outOfStock ? "stock-label out" : "stock-label"}>
+                          {" · "}{outOfStock ? "Out of stock" : `${item.stockQuantity} in stock`}
+                        </span>
+                      ) : (
+                        <span className="stock-label">{" · "}Unlimited</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="button-row">
+                    <button className={item.isAvailable ? "toggle on" : "toggle"} onClick={() => toggleItem(item)}>
+                      {item.isAvailable ? "Available" : "Hidden"}
+                    </button>
+                    <button className="toggle" onClick={() => editItem(item)}>Edit</button>
+                    <button className="danger-button" onClick={() => removeItem(item)}>Delete</button>
+                  </div>
                 </div>
-                <div className="button-row">
-                  <button className={item.isAvailable ? "toggle on" : "toggle"} onClick={() => toggleItem(item)}>
-                    {item.isAvailable ? "Available" : "Hidden"}
-                  </button>
-                  <button className="toggle" onClick={() => editItem(item)}>Edit</button>
-                  <button className="danger-button" onClick={() => removeItem(item)}>Delete</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </section>
         </main>
       )}
@@ -1591,6 +1774,227 @@ function VendorConsole() {
 }
 
 // ── Shared Components ─────────────────────────────────────────────────────────
+
+// ── Vendor KYC Panel ──────────────────────────────────────────────────────────
+
+function VendorKycPanel({ vendor, onUpdated }: { vendor: Vendor; onUpdated: (v: Vendor) => void }) {
+  const kyc = vendor.kyc;
+  const status = kyc?.status ?? "UNSUBMITTED";
+  const [ownerName, setOwnerName] = React.useState(kyc?.ownerName ?? vendor.name);
+  const [gstin, setGstin] = React.useState(kyc?.gstin ?? "");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await submitVendorKyc({ ownerName, gstin: gstin.trim() || undefined });
+      onUpdated(res.vendor);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const canSubmit = status === "UNSUBMITTED" || status === "REJECTED";
+
+  return (
+    <section className="panel" id="shop-kyc">
+      <h2>Shop verification</h2>
+      <div className={`kyc-status kyc-${status.toLowerCase()}`}>
+        {status === "VERIFIED"
+          ? "✓ Verified — customers see a verified badge on your shop."
+          : status === "PENDING"
+          ? "⏳ Pending review — an admin will verify your shop shortly."
+          : status === "REJECTED"
+          ? `✗ Verification rejected${kyc?.rejectionReason ? `: ${kyc.rejectionReason}` : ""}. Update your details and resubmit.`
+          : "Not submitted — add your details to earn a verified badge and build customer trust."}
+      </div>
+      {canSubmit ? (
+        <form className="onboarding-form" onSubmit={submit}>
+          <ErrorBanner message={error} onDismiss={() => setError("")} />
+          <label>
+            Owner / proprietor name
+            <input required value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
+          </label>
+          <label>
+            GSTIN / Udyam number (optional)
+            <input value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="e.g. 22AAAAA0000A1Z5" />
+          </label>
+          <button disabled={saving || !ownerName}>{saving ? "Submitting..." : "Submit for verification"}</button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+// ── Admin Console ─────────────────────────────────────────────────────────────
+
+function AdminPage() {
+  const [token, setToken] = React.useState(getStoredAdminToken());
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [metrics, setMetrics] = React.useState<AdminMetrics | null>(null);
+  const [adminVendors, setAdminVendors] = React.useState<AdminVendor[]>([]);
+  const [recentOrders, setRecentOrders] = React.useState<(Order & { vendorName: string })[]>([]);
+  const [error, setError] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+
+  const refresh = React.useCallback(async () => {
+    if (!getStoredAdminToken()) return;
+    try {
+      const [m, v, o] = await Promise.all([getAdminMetrics(), getAdminVendors(), getAdminOrders()]);
+      setMetrics(m);
+      setAdminVendors(v.vendors);
+      setRecentOrders(o.orders);
+    } catch (err) {
+      setError(messageFromError(err));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (token) refresh();
+  }, [token, refresh]);
+
+  async function login(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await adminLogin({ email, password });
+      setStoredAdminToken(res.token);
+      setToken(res.token);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function logout() {
+    clearStoredAdminToken();
+    setToken("");
+    setMetrics(null);
+    setAdminVendors([]);
+    setRecentOrders([]);
+  }
+
+  async function review(id: string, status: "VERIFIED" | "REJECTED", rejectionReason?: string) {
+    setError("");
+    try {
+      await verifyVendor(id, { status, rejectionReason });
+      await refresh();
+    } catch (err) {
+      setError(messageFromError(err));
+    }
+  }
+
+  if (!token) {
+    return (
+      <Shell hideVendorNav>
+        <main className="auth-page">
+          <section className="panel auth-panel">
+            <h2>Admin login</h2>
+            <p className="muted">Platform administration — manage vendor verification and view metrics.</p>
+            <ErrorBanner message={error} onDismiss={() => setError("")} />
+            <form className="onboarding-form" onSubmit={login}>
+              <label>
+                Email
+                <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </label>
+              <label>
+                Password
+                <input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              </label>
+              <button disabled={loading || !email || !password}>{loading ? "Logging in..." : "Login"}</button>
+            </form>
+          </section>
+        </main>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell hideVendorNav>
+      <section className="hero vendor-hero">
+        <div>
+          <p className="eyebrow">Platform admin</p>
+          <h1>Admin console</h1>
+        </div>
+        <div className="hero-actions">
+          <button className="quiet-button" onClick={logout}>Logout</button>
+        </div>
+      </section>
+      <main className="orders-page">
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+        {metrics ? (
+          <div className="admin-metrics">
+            <div><span>Vendors</span><strong>{metrics.totalVendors}</strong></div>
+            <div><span>Verified</span><strong>{metrics.verifiedVendors}</strong></div>
+            <div><span>Pending KYC</span><strong>{metrics.pendingKyc}</strong></div>
+            <div><span>Customers</span><strong>{metrics.totalCustomers}</strong></div>
+            <div><span>Total orders</span><strong>{metrics.totalOrders}</strong></div>
+            <div><span>Active orders</span><strong>{metrics.activeOrders}</strong></div>
+            <div><span>Collected revenue</span><strong>₹{metrics.collectedRevenue}</strong></div>
+            <div><span>Gross order value</span><strong>₹{metrics.grossOrderValue}</strong></div>
+          </div>
+        ) : null}
+
+        <section className="panel" style={{ marginTop: 24 }}>
+          <div className="section-head">
+            <h2>Vendors</h2>
+            <span>{adminVendors.length} shops</span>
+          </div>
+          {adminVendors.length === 0 ? <p className="muted">No vendors yet.</p> : null}
+          {adminVendors.map((v) => (
+            <div className="admin-vendor-row" key={v.id}>
+              <div>
+                <div className="admin-vendor-head">
+                  <strong>{v.name}</strong>
+                  <span className={`kyc-pill kyc-${v.kyc.status.toLowerCase()}`}>{v.kyc.status}</span>
+                </div>
+                <p className="muted small">{v.category} · {v.locationTag} · {v.orderCount} orders · ₹{v.revenue} revenue</p>
+                <p className="muted small">Owner: {v.kyc.ownerName}{v.kyc.gstin ? ` · GSTIN ${v.kyc.gstin}` : ""}</p>
+              </div>
+              <div className="button-row">
+                {v.kyc.status !== "VERIFIED" ? (
+                  <button onClick={() => review(v.id, "VERIFIED")}>Verify</button>
+                ) : null}
+                {v.kyc.status !== "REJECTED" ? (
+                  <button
+                    className="danger-button"
+                    onClick={() => review(v.id, "REJECTED", prompt("Rejection reason (optional):") ?? undefined)}
+                  >
+                    Reject
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="panel" style={{ marginTop: 24 }}>
+          <div className="section-head">
+            <h2>Recent orders</h2>
+            <span>{recentOrders.length}</span>
+          </div>
+          {recentOrders.length === 0 ? <p className="muted">No orders yet.</p> : null}
+          {recentOrders.map((o) => (
+            <div className="admin-order-row" key={o.id}>
+              <span><strong>#{o.orderCode}</strong> · {o.vendorName}</span>
+              <span className="muted">{o.orderType} · ₹{o.totalAmount}</span>
+              <StatusBadge status={o.status} />
+            </div>
+          ))}
+        </section>
+      </main>
+    </Shell>
+  );
+}
 
 function StatusBadge({ status }: { status: OrderStatus }) {
   return <span className={`status status-${status.toLowerCase()}`}>{status.replace("_", " ")}</span>;

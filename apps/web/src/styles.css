@@ -1162,6 +1162,257 @@ input {
 
 /* ── Responsive additions ─────────────────────────────────────────────────── */
 
+/* ── Operating Hours Editor ───────────────────────────────────────────────── */
+
+.hours-editor {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e4ded2;
+  border-radius: 8px;
+  padding: 14px;
+  background: #faf7f0;
+}
+
+.hours-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: #5e596b;
+}
+
+.muted.small {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.hours-row {
+  display: grid;
+  grid-template-columns: 90px auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #ece5da;
+}
+
+.hours-row:last-child {
+  border-bottom: none;
+}
+
+.hours-day {
+  font-size: 13px;
+  font-weight: 700;
+  color: #211f2d;
+}
+
+.hours-closed {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hours-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
+
+.hours-times input[type="time"] {
+  width: auto;
+  min-height: 38px;
+  padding: 4px 8px;
+}
+
+.hours-times span {
+  color: #756f80;
+  font-size: 13px;
+}
+
+/* ── Stock Labels ─────────────────────────────────────────────────────────── */
+
+.stock-label {
+  color: #756f80;
+  font-size: 13px;
+}
+
+.stock-label.out {
+  color: #8a2417;
+  font-weight: 700;
+}
+
+.low-stock-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-top: 6px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: #f5ead3;
+  color: #633806;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* ── Verified Badge ───────────────────────────────────────────────────────── */
+
+.verified-tick {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #1d9e75;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  vertical-align: middle;
+}
+
+.hero-tick {
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+}
+
+/* ── KYC Panel ────────────────────────────────────────────────────────────── */
+
+.kyc-status {
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.kyc-verified {
+  background: #e2f1d5;
+  color: #27500a;
+}
+
+.kyc-pending {
+  background: #e2f0fc;
+  color: #0c447c;
+}
+
+.kyc-rejected {
+  background: #fff1ef;
+  color: #8a2417;
+}
+
+.kyc-unsubmitted {
+  background: #f1efe8;
+  color: #5f5a6e;
+}
+
+/* ── Admin Console ────────────────────────────────────────────────────────── */
+
+.admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.admin-metrics div {
+  display: grid;
+  gap: 4px;
+  border-radius: 8px;
+  background: #fffdfa;
+  border: 1px solid #e4ded2;
+  padding: 14px;
+}
+
+.admin-metrics span {
+  color: #756f80;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-metrics strong {
+  font-size: 24px;
+}
+
+.admin-vendor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid #ece5da;
+  flex-wrap: wrap;
+}
+
+.admin-vendor-row:last-child {
+  border-bottom: none;
+}
+
+.admin-vendor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-vendor-row p {
+  margin: 4px 0 0;
+}
+
+.kyc-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kyc-pill.kyc-verified {
+  background: #e2f1d5;
+  color: #27500a;
+}
+
+.kyc-pill.kyc-pending {
+  background: #e2f0fc;
+  color: #0c447c;
+}
+
+.kyc-pill.kyc-rejected {
+  background: #fff1ef;
+  color: #8a2417;
+}
+
+.kyc-pill.kyc-unsubmitted {
+  background: #f1efe8;
+  color: #5f5a6e;
+}
+
+.admin-order-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #ece5da;
+  font-size: 14px;
+}
+
+.admin-order-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Push Opt-in ──────────────────────────────────────────────────────────── */
+
+.push-optin {
+  margin-top: 16px;
+}
+
+.push-button {
+  border-color: #d8d0c1;
+  background: #f1efe8;
+  color: #3c3489;
+}
+
 @media (max-width: 600px) {
   .search-bar {
     flex-direction: column;
@@ -1179,5 +1430,19 @@ input {
   .order-type-toggle,
   .payment-method-toggle {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .hours-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .hours-times {
+    justify-self: start;
+  }
+
+  .admin-vendor-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

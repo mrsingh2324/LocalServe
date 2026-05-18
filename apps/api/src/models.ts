@@ -31,6 +31,27 @@ const savedAddressSchema = new Schema(
   { _id: false }
 );
 
+const dayHoursSchema = new Schema(
+  {
+    closed: { type: Boolean, default: false },
+    open: { type: String, default: "09:00" },
+    close: { type: String, default: "21:00" }
+  },
+  { _id: false }
+);
+
+const kycSchema = new Schema(
+  {
+    ownerName: { type: String, required: true },
+    gstin: { type: String },
+    status: { type: String, enum: ["UNSUBMITTED", "PENDING", "VERIFIED", "REJECTED"], default: "PENDING" },
+    rejectionReason: { type: String },
+    submittedAt: { type: String },
+    reviewedAt: { type: String }
+  },
+  { _id: false }
+);
+
 const vendorSchema = new Schema(
   {
     _id: { type: String, required: true },
@@ -46,9 +67,27 @@ const vendorSchema = new Schema(
     isOpen: { type: Boolean, default: true },
     deliveryEnabled: { type: Boolean, default: false },
     deliveryFeeFlat: { type: Number, default: 0 },
-    bannerUrl: { type: String }
+    bannerUrl: { type: String },
+    operatingHours: { type: [dayHoursSchema], default: undefined },
+    acceptWindowMinutes: { type: Number, default: 15 },
+    kyc: { type: kycSchema, default: undefined }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
+);
+
+const pushSubscriptionSchema = new Schema(
+  {
+    _id: { type: String, required: true },
+    orderId: { type: String, index: true },
+    customerId: { type: String, index: true },
+    endpoint: { type: String, required: true },
+    keys: {
+      p256dh: { type: String, required: true },
+      auth: { type: String, required: true }
+    },
+    createdAt: { type: Date, default: Date.now }
+  },
+  { timestamps: { updatedAt: "updatedAt" } }
 );
 
 const menuItemSchema = new Schema(
@@ -60,7 +99,8 @@ const menuItemSchema = new Schema(
     price: { type: Number, required: true },
     photoUrl: { type: String, required: true },
     category: { type: String, required: true },
-    isAvailable: { type: Boolean, default: true }
+    isAvailable: { type: Boolean, default: true },
+    stockQuantity: { type: Number }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
 );
@@ -130,6 +170,7 @@ export const MenuItemModel = mongoose.model("MenuItem", menuItemSchema);
 export const OrderModel = mongoose.model("Order", orderSchema);
 export const NotificationModel = mongoose.model("Notification", notificationSchema);
 export const CustomerModel = mongoose.model("Customer", customerSchema);
+export const PushSubscriptionModel = mongoose.model("PushSubscription", pushSubscriptionSchema);
 
 export async function connectMongo(uri: string) {
   await mongoose.connect(uri, {

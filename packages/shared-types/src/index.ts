@@ -52,7 +52,25 @@ export const menuItemSchema = z.object({
   price: z.number().nonnegative(),
   photoUrl: z.string().url(),
   category: z.string(),
-  isAvailable: z.boolean()
+  isAvailable: z.boolean(),
+  stockQuantity: z.number().int().nonnegative().optional()
+});
+
+export const dayHoursSchema = z.object({
+  closed: z.boolean(),
+  open: z.string(),
+  close: z.string()
+});
+
+export const kycStatuses = ["UNSUBMITTED", "PENDING", "VERIFIED", "REJECTED"] as const;
+
+export const kycSchema = z.object({
+  ownerName: z.string(),
+  gstin: z.string().optional(),
+  status: z.enum(kycStatuses),
+  rejectionReason: z.string().optional(),
+  submittedAt: z.string().optional(),
+  reviewedAt: z.string().optional()
 });
 
 export const vendorSchema = z.object({
@@ -69,6 +87,9 @@ export const vendorSchema = z.object({
   deliveryEnabled: z.boolean().default(false),
   deliveryFeeFlat: z.number().default(0),
   bannerUrl: z.string().optional(),
+  operatingHours: z.array(dayHoursSchema).length(7).optional(),
+  acceptWindowMinutes: z.number().int().positive().optional(),
+  kyc: kycSchema.optional(),
 });
 
 export const publicVendorSchema = vendorSchema.omit({
@@ -106,6 +127,9 @@ export const orderSchema = z.object({
 
 export type Address = z.infer<typeof addressSchema>;
 export type DeliveryAddress = z.infer<typeof deliveryAddressSchema>;
+export type DayHours = z.infer<typeof dayHoursSchema>;
+export type Kyc = z.infer<typeof kycSchema>;
+export type KycStatus = (typeof kycStatuses)[number];
 export type Customer = z.infer<typeof customerSchema>;
 export type MenuItem = z.infer<typeof menuItemSchema>;
 export type Vendor = z.infer<typeof vendorSchema>;

@@ -1,4 +1,4 @@
-import type { Address, Customer, MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, Kyc, MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
@@ -22,12 +22,28 @@ export function clearStoredCustomerToken() {
   localStorage.removeItem("localserve_customer_token");
 }
 
+export function getStoredAdminToken() {
+  return localStorage.getItem("localserve_admin_token") ?? "";
+}
+
+export function setStoredAdminToken(token: string) {
+  localStorage.setItem("localserve_admin_token", token);
+}
+
+export function clearStoredAdminToken() {
+  localStorage.removeItem("localserve_admin_token");
+}
+
 function vendorAuthHeaders() {
   return { authorization: `Bearer ${getStoredVendorToken()}` };
 }
 
 function customerAuthHeaders() {
   return { authorization: `Bearer ${getStoredCustomerToken()}` };
+}
+
+function adminAuthHeaders() {
+  return { authorization: `Bearer ${getStoredAdminToken()}` };
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -60,7 +76,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getStorefront(slug: string) {
   return request<{
-    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string };
+    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[]; verified: boolean };
     menuItems: MenuItem[]
   }>(`/v/${slug}`);
 }
@@ -78,6 +94,7 @@ export type ShopSummary = {
   deliveryFeeFlat: number;
   storefrontUrl: string;
   bannerUrl?: string;
+  verified: boolean;
 };
 
 export function getShops(params?: { category?: string; q?: string; deliveryOnly?: boolean }) {
@@ -138,6 +155,8 @@ export function updateVendorProfile(payload: {
   deliveryEnabled?: boolean;
   deliveryFeeFlat?: number;
   bannerUrl?: string;
+  operatingHours?: DayHours[];
+  acceptWindowMinutes?: number;
 }) {
   return request<{ vendor: Vendor }>("/vendor/profile", {
     method: "PATCH",
@@ -311,5 +330,93 @@ export function deleteMenuItem(id: string) {
 export function getDashboard() {
   return request<{ totalOrders: number; revenue: number; pendingSettlement: number; recentOrders: Order[] }>("/vendor/dashboard", {
     headers: vendorAuthHeaders()
+  });
+}
+
+// ── Vendor KYC ────────────────────────────────────────────────────────────────
+
+export function submitVendorKyc(payload: { ownerName: string; gstin?: string }) {
+  return request<{ vendor: Vendor }>("/vendor/kyc", {
+    method: "POST",
+    headers: vendorAuthHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+export type AdminVendor = {
+  id: string;
+  name: string;
+  slug: string;
+  phone: string;
+  locationTag: string;
+  category: string;
+  kyc: Kyc;
+  isOpen: boolean;
+  deliveryEnabled: boolean;
+  orderCount: number;
+  revenue: number;
+};
+
+export type AdminMetrics = {
+  totalVendors: number;
+  verifiedVendors: number;
+  pendingKyc: number;
+  totalCustomers: number;
+  totalOrders: number;
+  activeOrders: number;
+  collectedRevenue: number;
+  grossOrderValue: number;
+};
+
+export function adminLogin(payload: { email: string; password: string }) {
+  return request<{ token: string; email: string }>("/auth/admin/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getAdminVendors() {
+  return request<{ vendors: AdminVendor[] }>("/admin/vendors", {
+    headers: adminAuthHeaders()
+  });
+}
+
+export function verifyVendor(id: string, payload: { status: "VERIFIED" | "REJECTED"; rejectionReason?: string }) {
+  return request<{ vendor: Vendor }>(`/admin/vendors/${id}/verify`, {
+    method: "PATCH",
+    headers: adminAuthHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getAdminMetrics() {
+  return request<AdminMetrics>("/admin/metrics", {
+    headers: adminAuthHeaders()
+  });
+}
+
+export function getAdminOrders() {
+  return request<{ orders: (Order & { vendorName: string })[] }>("/admin/orders", {
+    headers: adminAuthHeaders()
+  });
+}
+
+// ── Web Push ──────────────────────────────────────────────────────────────────
+
+export function getVapidPublicKey() {
+  return request<{ key: string | null }>("/push/vapid-public-key");
+}
+
+export function subscribeToPush(payload: {
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+  orderId?: string;
+  customerId?: string;
+}) {
+  return request<{ ok: boolean }>("/push/subscribe", {
+    method: "POST",
+    headers: getStoredCustomerToken() ? customerAuthHeaders() : {},
+    body: JSON.stringify(payload)
   });
 }
