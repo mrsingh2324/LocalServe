@@ -20,19 +20,29 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Server } from "socket.io";
 import twilio from "twilio";
+import webpush from "web-push";
 import { z, ZodError } from "zod";
 import {
   CustomerModel,
   MenuItemModel,
   NotificationModel,
   OrderModel,
+  PushSubscriptionModel,
   VendorModel,
   connectMongo
 } from "./models.js";
-import type { Address, Customer, DayHours, DeliveryAddress, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, DeliveryAddress, Kyc, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
 
 type StoredVendor = Vendor & { passwordHash: string };
 type StoredCustomer = Customer & { passwordHash?: string };
+type StoredPushSubscription = {
+  id: string;
+  orderId?: string;
+  customerId?: string;
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: string;
+};
 type NotificationRecord = {
   id: string;
   vendorId: string;
@@ -53,6 +63,7 @@ type StoredState = {
   orders: Order[];
   notifications?: NotificationRecord[];
   customers?: StoredCustomer[];
+  pushSubscriptions?: StoredPushSubscription[];
 };
 
 const port = Number(process.env.PORT ?? 4000);
@@ -82,6 +93,13 @@ const storageSecretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY;
 const storagePublicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL;
 const otpDevCode = process.env.OTP_DEV_CODE ?? "123456";
 const otpTtlMs = Number(process.env.OTP_TTL_MINUTES ?? 5) * 60 * 1000;
+const adminEmail = (process.env.ADMIN_EMAIL ?? "admin@localserve.local").toLowerCase();
+const adminPasswordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD ?? "admin123", 10);
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const vapidSubject = process.env.VAPID_SUBJECT ?? "mailto:orders@localserve.local";
+const pushEnabled = Boolean(vapidPublicKey && vapidPrivateKey);
+if (pushEnabled) webpush.setVapidDetails(vapidSubject, vapidPublicKey as string, vapidPrivateKey as string);
 const dataFile = path.resolve(process.cwd(), "data/localserve.json");
 const useMongo = process.env.NODE_ENV !== "test" && (process.env.USE_MONGO === "true" || process.env.USE_MONGO === "1");
 const mongoUri = process.env.MONGODB_URI ?? "mongodb://localserve:localserve@localhost:27017/localserve?authSource=admin";
@@ -137,6 +155,7 @@ function validateRuntimeConfig() {
   requireEnv("STORAGE_BUCKET", storageBucket);
   requireEnv("STORAGE_ACCESS_KEY_ID", storageAccessKeyId);
   requireEnv("STORAGE_SECRET_ACCESS_KEY", storageSecretAccessKey);
+  requireEnv("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
 }
 
 const demoPasswordHash = bcrypt.hashSync("demo123", 10);
@@ -218,6 +237,7 @@ let menuItems: MenuItem[] = [
 ];
 
 let customers: StoredCustomer[] = [];
+let pushSubscriptions: StoredPushSubscription[] = [];
 const orders = new Map<string, Order>();
 const notifications = new Map<string, NotificationRecord>();
 const otpChallenges = new Map<string, { codeHash: string; expiresAt: number; attempts: number }>();
@@ -328,6 +348,26 @@ const paymentConfirmationSchema = z.object({
   razorpay_payment_id: z.string(),
   razorpay_signature: z.string()
 });
+const kycSubmitSchema = z.object({
+  ownerName: z.string().min(2).max(120),
+  gstin: z.string().max(20).optional().or(z.literal(""))
+});
+const adminLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6)
+});
+const vendorVerifySchema = z.object({
+  status: z.enum(["VERIFIED", "REJECTED"]),
+  rejectionReason: z.string().max(300).optional()
+});
+const pushSubscribeSchema = z.object({
+  subscription: z.object({
+    endpoint: z.string().url(),
+    keys: z.object({ p256dh: z.string(), auth: z.string() })
+  }),
+  orderId: z.string().optional(),
+  customerId: z.string().optional()
+});
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: process.env.NODE_ENV === "test" ? 1000 : 8, standardHeaders: true, legacyHeaders: false });
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
@@ -369,6 +409,10 @@ function createCustomerToken(customerId: string) {
   return jwt.sign({ customerId, role: "customer" }, jwtSecret, { expiresIn: "30d" });
 }
 
+function createAdminToken() {
+  return jwt.sign({ role: "admin" }, jwtSecret, { expiresIn: "1d" });
+}
+
 function getVendorBySlug(slug: string) {
   return vendors.find((candidate) => candidate.slug === slug);
 }
@@ -401,6 +445,13 @@ function ensureDemoSeeds() {
   for (const seed of requiredItems) {
     if (!menuItems.some((item) => item.id === seed.id)) menuItems.push(seed);
   }
+
+  for (const demoId of ["vendor_ravi", "vendor_meera"]) {
+    const demoVendor = vendors.find((vendor) => vendor.id === demoId);
+    if (demoVendor && !demoVendor.kyc) {
+      demoVendor.kyc = { ownerName: demoVendor.name, status: "VERIFIED", reviewedAt: new Date().toISOString() };
+    }
+  }
 }
 
 function publicVendor(vendor: StoredVendor): Vendor {
@@ -421,7 +472,8 @@ function publicStorefrontVendor(vendor: Vendor) {
     deliveryEnabled: vendor.deliveryEnabled ?? false,
     deliveryFeeFlat: vendor.deliveryFeeFlat ?? 0,
     bannerUrl: vendor.bannerUrl,
-    operatingHours: vendor.operatingHours
+    operatingHours: vendor.operatingHours,
+    verified: vendor.kyc?.status === "VERIFIED"
   };
 }
 
@@ -569,6 +621,20 @@ function requireCustomer(req: express.Request, res: express.Response, next: expr
   res.status(401).json({ error: "Customer authentication required" });
 }
 
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const token = req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  try {
+    const payload = jwt.verify(token ?? "", jwtSecret) as { role?: string };
+    if (payload.role === "admin") {
+      next();
+      return;
+    }
+  } catch {
+    // Common auth error below.
+  }
+  res.status(401).json({ error: "Admin authentication required" });
+}
+
 function optionalCustomer(req: express.Request, _res: express.Response, next: express.NextFunction) {
   const auth = req.header("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "");
@@ -676,6 +742,32 @@ async function issueRefundIfNeeded(order: Order): Promise<string | undefined> {
   return undefined;
 }
 
+async function sendPushToOrder(order: Order, payload: { title: string; body: string }) {
+  if (!pushEnabled || pushSubscriptions.length === 0) return;
+  const targets = pushSubscriptions.filter(
+    (sub) => sub.orderId === order.id || (order.customerId !== undefined && sub.customerId === order.customerId)
+  );
+  if (targets.length === 0) return;
+  const dead: string[] = [];
+  await Promise.all(
+    targets.map(async (sub) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: sub.keys },
+          JSON.stringify({ title: payload.title, body: payload.body, url: `${publicAppUrl}/order/${order.id}` })
+        );
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode === 404 || statusCode === 410) dead.push(sub.id);
+      }
+    })
+  );
+  if (dead.length) {
+    pushSubscriptions = pushSubscriptions.filter((sub) => !dead.includes(sub.id));
+    if (useMongo) await PushSubscriptionModel.deleteMany({ _id: { $in: dead } });
+  }
+}
+
 async function runOrderMaintenance() {
   const now = Date.now();
   let changed = false;
@@ -697,6 +789,7 @@ async function runOrderMaintenance() {
         orders.set(order.id, cancelled);
         io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
         io.to(`order:${order.id}`).emit("order_updated", cancelled);
+        await sendPushToOrder(cancelled, { title: "Order cancelled", body: `Order #${cancelled.orderCode} was cancelled — the shop did not accept it in time.` });
         changed = true;
       }
     }
@@ -776,12 +869,13 @@ async function confirmOrderPayment(order: Order, paymentId: string) {
 
 async function loadState() {
   if (useMongo) {
-    const [dbVendors, dbMenuItems, dbOrders, dbNotifications, dbCustomers] = await Promise.all([
+    const [dbVendors, dbMenuItems, dbOrders, dbNotifications, dbCustomers, dbPushSubs] = await Promise.all([
       VendorModel.find().lean(),
       MenuItemModel.find().lean(),
       OrderModel.find().lean(),
       NotificationModel.find().lean(),
-      CustomerModel.find().lean()
+      CustomerModel.find().lean(),
+      PushSubscriptionModel.find().lean()
     ]);
     if (dbVendors.length) {
       vendors = dbVendors.map((vendor) => ({
@@ -800,7 +894,8 @@ async function loadState() {
         deliveryFeeFlat: (vendor as unknown as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0,
         bannerUrl: (vendor as unknown as { bannerUrl?: string }).bannerUrl,
         operatingHours: (vendor as unknown as { operatingHours?: DayHours[] }).operatingHours,
-        acceptWindowMinutes: (vendor as unknown as { acceptWindowMinutes?: number }).acceptWindowMinutes ?? 15
+        acceptWindowMinutes: (vendor as unknown as { acceptWindowMinutes?: number }).acceptWindowMinutes ?? 15,
+        kyc: (vendor as unknown as { kyc?: Kyc }).kyc
       }));
       menuItems = dbMenuItems.map((item) => ({
         id: String(item._id),
@@ -875,6 +970,20 @@ async function loadState() {
           createdAt: cust.createdAt.toISOString()
         };
       });
+      pushSubscriptions = dbPushSubs.map((s) => {
+        const sub = s as unknown as {
+          _id: unknown; orderId?: string; customerId?: string; endpoint: string;
+          keys: { p256dh: string; auth: string }; createdAt: Date;
+        };
+        return {
+          id: String(sub._id),
+          orderId: sub.orderId,
+          customerId: sub.customerId,
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+          createdAt: sub.createdAt.toISOString()
+        };
+      });
       ensureDemoSeeds();
       return;
     }
@@ -893,6 +1002,7 @@ async function loadState() {
     notifications.clear();
     for (const notification of parsed.notifications ?? []) notifications.set(notification.id, notification);
     customers = parsed.customers ?? [];
+    pushSubscriptions = parsed.pushSubscriptions ?? [];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("Could not load local data store; using seed data.", error);
   }
@@ -904,7 +1014,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
         { upsert: true }
       );
     }
@@ -932,11 +1042,20 @@ async function persistState() {
         { upsert: true }
       );
     }
+    const knownSubIds = pushSubscriptions.map((sub) => sub.id);
+    await PushSubscriptionModel.deleteMany({ _id: { $nin: knownSubIds } });
+    for (const sub of pushSubscriptions) {
+      await PushSubscriptionModel.updateOne(
+        { _id: sub.id },
+        { $set: { orderId: sub.orderId, customerId: sub.customerId, endpoint: sub.endpoint, keys: sub.keys, createdAt: new Date(sub.createdAt) } },
+        { upsert: true }
+      );
+    }
     return;
   }
 
   await fs.mkdir(path.dirname(dataFile), { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify({ vendors, menuItems, orders: [...orders.values()], notifications: [...notifications.values()], customers }, null, 2));
+  await fs.writeFile(dataFile, JSON.stringify({ vendors, menuItems, orders: [...orders.values()], notifications: [...notifications.values()], customers, pushSubscriptions }, null, 2));
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -971,7 +1090,8 @@ app.get("/shops", asyncHandler(async (req, res) => {
     deliveryEnabled: v.deliveryEnabled ?? false,
     deliveryFeeFlat: v.deliveryFeeFlat ?? 0,
     storefrontUrl: `${publicAppUrl}/v/${v.slug}`,
-    bannerUrl: v.bannerUrl
+    bannerUrl: v.bannerUrl,
+    verified: v.kyc?.status === "VERIFIED"
   }));
 
   res.json({ shops: shopList, total: shopList.length });
@@ -1091,6 +1211,119 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
   });
   await persistState();
   res.json({ vendor: await buildVendorResponse(vendor) });
+}));
+
+app.post("/vendor/kyc", requireVendor, asyncHandler(async (req, res) => {
+  const vendor = getAuthedVendor(req);
+  if (!vendor) {
+    res.status(404).json({ error: "Vendor not found" });
+    return;
+  }
+  const body = kycSubmitSchema.parse(req.body);
+  vendor.kyc = {
+    ownerName: body.ownerName,
+    gstin: body.gstin || undefined,
+    status: "PENDING",
+    submittedAt: new Date().toISOString()
+  };
+  await persistState();
+  res.json({ vendor: await buildVendorResponse(vendor) });
+}));
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+app.post("/auth/admin/login", authLimiter, asyncHandler(async (req, res) => {
+  const body = adminLoginSchema.parse(req.body);
+  if (body.email.toLowerCase() !== adminEmail || !bcrypt.compareSync(body.password, adminPasswordHash)) {
+    res.status(401).json({ error: "Invalid admin credentials" });
+    return;
+  }
+  res.json({ token: createAdminToken(), email: adminEmail });
+}));
+
+app.get("/admin/vendors", requireAdmin, asyncHandler(async (_req, res) => {
+  const list = vendors.map((vendor) => {
+    const vendorOrderList = vendorOrders(vendor.id);
+    return {
+      id: vendor.id,
+      name: vendor.name,
+      slug: vendor.slug,
+      phone: vendor.phone,
+      locationTag: vendor.locationTag,
+      category: vendor.category ?? "General Store",
+      kyc: vendor.kyc ?? { ownerName: vendor.name, status: "UNSUBMITTED" as const },
+      isOpen: vendor.isOpen ?? true,
+      deliveryEnabled: vendor.deliveryEnabled ?? false,
+      orderCount: vendorOrderList.length,
+      revenue: vendorOrderList.filter((order) => order.status === "COLLECTED").reduce((sum, order) => sum + order.totalAmount, 0)
+    };
+  });
+  res.json({ vendors: list });
+}));
+
+app.patch("/admin/vendors/:id/verify", requireAdmin, asyncHandler(async (req, res) => {
+  const vendor = getVendorById(req.params.id);
+  if (!vendor) {
+    res.status(404).json({ error: "Vendor not found" });
+    return;
+  }
+  const body = vendorVerifySchema.parse(req.body);
+  const kyc: Kyc = {
+    ownerName: vendor.kyc?.ownerName ?? vendor.name,
+    gstin: vendor.kyc?.gstin,
+    status: body.status,
+    rejectionReason: body.status === "REJECTED" ? body.rejectionReason : undefined,
+    submittedAt: vendor.kyc?.submittedAt,
+    reviewedAt: new Date().toISOString()
+  };
+  vendor.kyc = kyc;
+  await persistState();
+  res.json({ vendor: publicVendor(vendor) });
+}));
+
+app.get("/admin/metrics", requireAdmin, asyncHandler(async (_req, res) => {
+  const allOrders = [...orders.values()];
+  const collected = allOrders.filter((order) => order.status === "COLLECTED");
+  res.json({
+    totalVendors: vendors.length,
+    verifiedVendors: vendors.filter((vendor) => vendor.kyc?.status === "VERIFIED").length,
+    pendingKyc: vendors.filter((vendor) => vendor.kyc?.status === "PENDING").length,
+    totalCustomers: customers.length,
+    totalOrders: allOrders.length,
+    activeOrders: allOrders.filter((order) => ["CONFIRMED", "PREPARING", "READY"].includes(order.status)).length,
+    collectedRevenue: collected.reduce((sum, order) => sum + order.totalAmount, 0),
+    grossOrderValue: allOrders.filter((order) => order.status !== "CANCELLED").reduce((sum, order) => sum + order.totalAmount, 0)
+  });
+}));
+
+app.get("/admin/orders", requireAdmin, asyncHandler(async (_req, res) => {
+  const recent = [...orders.values()]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 100)
+    .map((order) => ({ ...order, vendorName: getVendorById(order.vendorId)?.name ?? "Shop" }));
+  res.json({ orders: recent });
+}));
+
+// ── Web Push ──────────────────────────────────────────────────────────────────
+
+app.get("/push/vapid-public-key", (_req, res) => {
+  res.json({ key: pushEnabled ? vapidPublicKey : null });
+});
+
+app.post("/push/subscribe", optionalCustomer, asyncHandler(async (req, res) => {
+  const body = pushSubscribeSchema.parse(req.body);
+  const customerId = getAuthedCustomerId(req) ?? body.customerId;
+  pushSubscriptions = pushSubscriptions.filter((sub) => sub.endpoint !== body.subscription.endpoint);
+  pushSubscriptions.push({
+    id: crypto.randomUUID(),
+    orderId: body.orderId,
+    customerId,
+    endpoint: body.subscription.endpoint,
+    keys: body.subscription.keys,
+    createdAt: new Date().toISOString()
+  });
+  await persistState();
+  res.status(201).json({ ok: true });
 }));
 
 // ── Customer Auth ─────────────────────────────────────────────────────────────
@@ -1381,6 +1614,7 @@ app.post("/orders/:id/cancel", optionalCustomer, asyncHandler(async (req, res) =
   await persistState();
   io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
   io.to(`order:${order.id}`).emit("order_updated", cancelled);
+  await sendPushToOrder(cancelled, { title: "Order cancelled", body: `Order #${cancelled.orderCode} has been cancelled.` });
   res.json({ order: cancelled, refundId });
 }));
 
@@ -1413,6 +1647,16 @@ app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => 
   await persistState();
   io.to(`vendor:${vendor.id}`).emit("order_updated", updated);
   io.to(`order:${updated.id}`).emit(status === "READY" ? "order_ready" : "order_updated", updated);
+  const pushMessages: Record<OrderStatus, { title: string; body: string } | undefined> = {
+    PENDING: undefined,
+    CONFIRMED: undefined,
+    PREPARING: { title: "Order in progress", body: `${vendor.name} has started preparing order #${updated.orderCode}.` },
+    READY: { title: "Order ready", body: updated.orderType === "delivery" ? `Order #${updated.orderCode} is out for delivery.` : `Order #${updated.orderCode} is ready for pickup.` },
+    COLLECTED: { title: "Order completed", body: `Order #${updated.orderCode} is complete. Thanks for ordering!` },
+    CANCELLED: { title: "Order cancelled", body: `Order #${updated.orderCode} has been cancelled by the shop.` }
+  };
+  const pushMessage = pushMessages[status];
+  if (pushMessage) await sendPushToOrder(updated, pushMessage);
   res.json({ order: updated, notification: notification ? { channel: notification.channel, to: notification.recipient, message: notification.body } : undefined });
 }));
 
@@ -1622,6 +1866,7 @@ export function resetLocalState() {
   orders.clear();
   notifications.clear();
   customers = [];
+  pushSubscriptions = [];
 }
 
 export { app };

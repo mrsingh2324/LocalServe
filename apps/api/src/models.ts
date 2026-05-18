@@ -40,6 +40,18 @@ const dayHoursSchema = new Schema(
   { _id: false }
 );
 
+const kycSchema = new Schema(
+  {
+    ownerName: { type: String, required: true },
+    gstin: { type: String },
+    status: { type: String, enum: ["UNSUBMITTED", "PENDING", "VERIFIED", "REJECTED"], default: "PENDING" },
+    rejectionReason: { type: String },
+    submittedAt: { type: String },
+    reviewedAt: { type: String }
+  },
+  { _id: false }
+);
+
 const vendorSchema = new Schema(
   {
     _id: { type: String, required: true },
@@ -57,9 +69,25 @@ const vendorSchema = new Schema(
     deliveryFeeFlat: { type: Number, default: 0 },
     bannerUrl: { type: String },
     operatingHours: { type: [dayHoursSchema], default: undefined },
-    acceptWindowMinutes: { type: Number, default: 15 }
+    acceptWindowMinutes: { type: Number, default: 15 },
+    kyc: { type: kycSchema, default: undefined }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
+);
+
+const pushSubscriptionSchema = new Schema(
+  {
+    _id: { type: String, required: true },
+    orderId: { type: String, index: true },
+    customerId: { type: String, index: true },
+    endpoint: { type: String, required: true },
+    keys: {
+      p256dh: { type: String, required: true },
+      auth: { type: String, required: true }
+    },
+    createdAt: { type: Date, default: Date.now }
+  },
+  { timestamps: { updatedAt: "updatedAt" } }
 );
 
 const menuItemSchema = new Schema(
@@ -142,6 +170,7 @@ export const MenuItemModel = mongoose.model("MenuItem", menuItemSchema);
 export const OrderModel = mongoose.model("Order", orderSchema);
 export const NotificationModel = mongoose.model("Notification", notificationSchema);
 export const CustomerModel = mongoose.model("Customer", customerSchema);
+export const PushSubscriptionModel = mongoose.model("PushSubscription", pushSubscriptionSchema);
 
 export async function connectMongo(uri: string) {
   await mongoose.connect(uri, {
