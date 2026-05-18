@@ -1104,8 +1104,12 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 export async function initialize() {
   validateRuntimeConfig();
   if (redisPubClient && redisSubClient) {
-    await Promise.all([redisPubClient.connect(), redisSubClient.connect()]);
-    io.adapter(createAdapter(redisPubClient, redisSubClient));
+    try {
+      await Promise.all([redisPubClient.connect(), redisSubClient.connect()]);
+      io.adapter(createAdapter(redisPubClient, redisSubClient));
+    } catch (error) {
+      console.warn("Redis unavailable; continuing without the Socket.IO Redis adapter", error);
+    }
   }
   if (useMongo) await connectMongo(mongoUri);
   await loadState();
