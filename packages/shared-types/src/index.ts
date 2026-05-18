@@ -31,6 +31,11 @@ export const vendorSchema = z.object({
   storefrontUrl: z.string()
 });
 
+export const publicVendorSchema = vendorSchema.omit({
+  phone: true,
+  upiId: true
+});
+
 export const orderLineSchema = z.object({
   menuItemId: z.string(),
   name: z.string(),
@@ -56,6 +61,7 @@ export const orderSchema = z.object({
 
 export type MenuItem = z.infer<typeof menuItemSchema>;
 export type Vendor = z.infer<typeof vendorSchema>;
+export type PublicVendor = z.infer<typeof publicVendorSchema>;
 export type OrderLine = z.infer<typeof orderLineSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type OrderStatus = (typeof orderStatuses)[number];

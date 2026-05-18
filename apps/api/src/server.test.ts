@@ -21,6 +21,14 @@ test("demo vendors are exposed with independent storefronts", async () => {
   );
 });
 
+test("customer storefront does not expose private vendor fields", async () => {
+  resetLocalState();
+  const response = await request(app).get("/v/ravi-canteen").expect(200);
+  assert.equal(response.body.vendor.slug, "ravi-canteen");
+  assert.equal(response.body.vendor.phone, undefined);
+  assert.equal(response.body.vendor.upiId, undefined);
+});
+
 test("vendor login returns a JWT and scoped vendor menu", async () => {
   resetLocalState();
   const token = await login();

@@ -345,6 +345,17 @@ function publicVendor(vendor: StoredVendor): Vendor {
   return { ...vendor, passwordHash: undefined, storefrontUrl: `${publicAppUrl}/v/${vendor.slug}` } as Vendor;
 }
 
+function publicStorefrontVendor(vendor: Vendor) {
+  return {
+    id: vendor.id,
+    name: vendor.name,
+    slug: vendor.slug,
+    locationTag: vendor.locationTag,
+    qrUrl: vendor.qrUrl,
+    storefrontUrl: vendor.storefrontUrl
+  };
+}
+
 function otpKey(phone: string, purpose: "login" | "register") {
   return `${purpose}:${phone}`;
 }
@@ -506,6 +517,18 @@ function vendorMenu(vendorId: string, availableOnly = false) {
 
 function vendorOrders(vendorId: string) {
   return [...orders.values()].filter((order) => order.vendorId === vendorId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function expireStalePendingOrders() {
+  const staleBefore = Date.now() - 30 * 60 * 1000;
+  let changed = false;
+  for (const order of orders.values()) {
+    if (order.status === "PENDING" && new Date(order.createdAt).getTime() < staleBefore) {
+      orders.set(order.id, { ...order, status: "CANCELLED" });
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function extensionForMimeType(mimetype: string) {
@@ -834,7 +857,8 @@ app.get("/v/:vendorSlug", asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Vendor not found" });
     return;
   }
-  res.json({ vendor: await buildVendorResponse(vendor), menuItems: vendorMenu(vendor.id, true) });
+  const vendorResponse = await buildVendorResponse(vendor);
+  res.json({ vendor: publicStorefrontVendor(vendorResponse), menuItems: vendorMenu(vendor.id, true) });
 }));
 
 app.post("/orders", asyncHandler(async (req, res) => {
@@ -939,10 +963,11 @@ app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => 
   res.json({ order: updated, notification: notification ? { channel: notification.channel, to: notification.recipient, message: notification.body } : undefined });
 }));
 
-app.get("/vendor/orders", requireVendor, (req, res) => {
+app.get("/vendor/orders", requireVendor, asyncHandler(async (req, res) => {
+  if (expireStalePendingOrders()) await persistState();
   const vendor = getAuthedVendor(req);
   res.json({ orders: vendor ? vendorOrders(vendor.id) : [] });
-});
+}));
 
 app.get("/vendor/orders/:id/receipt.pdf", requireVendor, (req, res) => {
   const vendor = getAuthedVendor(req);
@@ -1055,7 +1080,8 @@ app.get("/vendor/qr.png", requireVendor, asyncHandler(async (req, res) => {
   res.send(png);
 }));
 
-app.get("/vendor/dashboard", requireVendor, (req, res) => {
+app.get("/vendor/dashboard", requireVendor, asyncHandler(async (req, res) => {
+  if (expireStalePendingOrders()) await persistState();
   const vendor = getAuthedVendor(req);
   const allOrders = vendor ? vendorOrders(vendor.id) : [];
   const revenue = allOrders.filter((order) => order.status === "COLLECTED").reduce((sum, order) => sum + order.totalAmount, 0);
@@ -1063,7 +1089,7 @@ app.get("/vendor/dashboard", requireVendor, (req, res) => {
     .filter((order) => ["CONFIRMED", "PREPARING", "READY"].includes(order.status))
     .reduce((sum, order) => sum + order.totalAmount, 0);
   res.json({ totalOrders: allOrders.length, revenue, pendingSettlement, recentOrders: allOrders.slice(0, 5) });
-});
+}));
 
 app.get("/vendor/notifications", requireVendor, (req, res) => {
   const vendor = getAuthedVendor(req);

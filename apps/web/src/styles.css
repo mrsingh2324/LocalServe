@@ -139,6 +139,12 @@ nav a,
   padding: 0 14px;
 }
 
+.onboarding-form .quiet-button {
+  border-color: #d8d0c1;
+  background: #f1efe8;
+  color: #3c3489;
+}
+
 .eyebrow,
 .category {
   margin: 0 0 8px;
@@ -301,6 +307,48 @@ input {
 .fine-print {
   margin: 0;
   font-size: 12px;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e3aaa1;
+  border-radius: 8px;
+  background: #fff1ef;
+  color: #8a2417;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.error-banner button {
+  min-height: 34px;
+  flex: 0 0 auto;
+  background: #8a2417;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.payment-pending {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d8d0c1;
+  border-radius: 8px;
+  background: #f8f4ec;
+  padding: 12px;
+}
+
+.payment-pending span {
+  color: #756f80;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.page-alert {
+  padding: 18px clamp(16px, 4vw, 56px) 0;
 }
 
 .confirmation,

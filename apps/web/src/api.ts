@@ -1,4 +1,4 @@
-import type { MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
@@ -22,12 +22,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       ...(options.headers ?? {})
     }
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const raw = await response.text();
+    let parsed: { error?: string; details?: { fieldErrors?: Record<string, string[]> } } | undefined;
+    try {
+      parsed = JSON.parse(raw) as { error?: string; details?: { fieldErrors?: Record<string, string[]> } };
+    } catch {
+      parsed = undefined;
+    }
+    const fieldMessage = parsed?.details?.fieldErrors
+      ? Object.entries(parsed.details.fieldErrors)
+          .flatMap(([field, messages]) => messages.map((message) => `${field}: ${message}`))
+          .join("; ")
+      : "";
+    throw new Error(fieldMessage || parsed?.error || raw || "Request failed");
+  }
   return response.json() as Promise<T>;
 }
 
 export function getStorefront(slug: string) {
-  return request<{ vendor: Vendor; menuItems: MenuItem[] }>(`/v/${slug}`);
+  return request<{ vendor: PublicVendor; menuItems: MenuItem[] }>(`/v/${slug}`);
 }
 
 export function registerVendor(payload: { name: string; phone: string; locationTag: string; upiId: string; otpCode: string; password?: string }) {

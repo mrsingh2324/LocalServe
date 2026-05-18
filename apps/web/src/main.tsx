@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
 import { io } from "socket.io-client";
-import type { MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
 import {
   API_URL,
   confirmOrderPayment,
@@ -18,7 +18,6 @@ import {
   getVendorMenu,
   getVendorOrders,
   getVendorQr,
-  loginVendor,
   registerVendor,
   requestVendorOtp,
   setStoredVendorToken,
@@ -103,6 +102,20 @@ async function openRazorpayCheckout(options: {
   });
 }
 
+function messageFromError(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="error-banner" role="alert">
+      <span>{message}</span>
+      {onDismiss ? <button type="button" onClick={onDismiss}>Dismiss</button> : null}
+    </div>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -118,26 +131,54 @@ function App() {
 
 function CustomerStorefront() {
   const slug = location.pathname.split("/").pop() ?? "ravi-canteen";
-  const [vendor, setVendor] = React.useState<Vendor | null>(null);
+  const [vendor, setVendor] = React.useState<PublicVendor | null>(null);
   const [menuItems, setMenuItems] = React.useState<MenuItem[]>([]);
-  const [email, setEmail] = React.useState("priya@company.in");
+  const [email, setEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [isPaying, setIsPaying] = React.useState(false);
   const [placedOrder, setPlacedOrder] = React.useState<Order | null>(null);
+  const [pendingPayment, setPendingPayment] = React.useState<{
+    order: Order;
+    payment: { keyId?: string; orderId?: string; amount?: number; currency?: string };
+  } | null>(null);
+  const [error, setError] = React.useState("");
   const { quantities, setQuantity, clear } = useCartStore();
 
   React.useEffect(() => {
-    getStorefront(slug).then((data) => {
-      setVendor(data.vendor);
-      setMenuItems(data.menuItems);
-    });
+    setError("");
+    getStorefront(slug)
+      .then((data) => {
+        setVendor(data.vendor);
+        setMenuItems(data.menuItems);
+      })
+      .catch((loadError) => setError(messageFromError(loadError)));
   }, [slug]);
 
   const cartLines = buildCartLines(menuItems, quantities);
   const total = cartLines.reduce((sum, line) => sum + line.lineTotal, 0);
 
+  async function openPayment(order: Order, payment: { keyId?: string; orderId?: string; amount?: number; currency?: string }) {
+    if (!payment.keyId || !payment.orderId) return;
+    await openRazorpayCheckout({
+      keyId: payment.keyId,
+      orderId: payment.orderId,
+      amount: payment.amount ?? order.totalAmount * 100,
+      currency: payment.currency ?? "INR",
+      name: vendor?.name ?? "LocalServe",
+      email,
+      phone,
+      onSuccess: async (payload) => {
+        const confirmed = await confirmOrderPayment(order.id, payload);
+        setPlacedOrder(confirmed.order);
+        setPendingPayment(null);
+        clear();
+      }
+    });
+  }
+
   async function pay() {
     setIsPaying(true);
+    setError("");
     try {
       const response = await createOrder({
         vendorSlug: slug,
@@ -146,40 +187,42 @@ function CustomerStorefront() {
         items: cartLines.map((line) => ({ menuItemId: line.item.id, quantity: line.quantity }))
       });
       if (response.payment.provider === "razorpay" && response.payment.keyId && response.payment.orderId) {
-        await openRazorpayCheckout({
-          keyId: response.payment.keyId,
-          orderId: response.payment.orderId,
-          amount: response.payment.amount ?? response.order.totalAmount * 100,
-          currency: response.payment.currency ?? "INR",
-          name: vendor?.name ?? "LocalServe",
-          email,
-          phone,
-          onSuccess: async (payload) => {
-            const confirmed = await confirmOrderPayment(response.order.id, payload);
-            setPlacedOrder(confirmed.order);
-            clear();
-          }
-        });
+        setPendingPayment({ order: response.order, payment: response.payment });
+        await openPayment(response.order, response.payment);
       } else {
         setPlacedOrder(response.order);
         clear();
       }
+    } catch (payError) {
+      setError(messageFromError(payError));
     } finally {
       setIsPaying(false);
     }
   }
 
-  if (!vendor) return <Shell><div className="empty">Loading storefront...</div></Shell>;
+  async function retryPayment() {
+    if (!pendingPayment) return;
+    setIsPaying(true);
+    setError("");
+    try {
+      await openPayment(pendingPayment.order, pendingPayment.payment);
+    } catch (payError) {
+      setError(messageFromError(payError));
+    } finally {
+      setIsPaying(false);
+    }
+  }
+
+  if (!vendor) return <Shell hideVendorNav><div className="empty">{error || "Loading storefront..."}</div></Shell>;
 
   return (
-    <Shell>
+    <Shell hideVendorNav>
       <section className="hero store-hero">
         <div>
           <p className="eyebrow">Scan, order, pick up</p>
           <h1>{vendor.name}</h1>
           <p>{vendor.locationTag}</p>
         </div>
-        <Link className="quiet-link" to="/vendor">Vendor console</Link>
       </section>
 
       {placedOrder ? (
@@ -216,6 +259,16 @@ function CustomerStorefront() {
 
           <aside className="cart-panel">
             <h2>Your order</h2>
+            <ErrorBanner message={error} onDismiss={() => setError("")} />
+            {pendingPayment ? (
+              <div className="payment-pending">
+                <strong>Payment pending for order #{pendingPayment.order.orderCode}</strong>
+                <span>Complete payment to send this order to the vendor queue.</span>
+                <button type="button" onClick={retryPayment} disabled={isPaying}>
+                  {isPaying ? "Opening payment..." : "Retry payment"}
+                </button>
+              </div>
+            ) : null}
             {cartLines.length === 0 ? (
               <p className="muted">Add items to start your order.</p>
             ) : (
@@ -230,7 +283,7 @@ function CustomerStorefront() {
             )}
             <label>
               Email for notification
-              <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
+              <input required value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
             </label>
             <label>
               Phone optional
@@ -240,10 +293,10 @@ function CustomerStorefront() {
               <span>Total</span>
               <strong>₹{total}</strong>
             </div>
-            <button disabled={!cartLines.length || isPaying} onClick={pay}>
-              {isPaying ? "Confirming payment..." : "Pay with UPI"}
+            <button disabled={!cartLines.length || !email || isPaying || Boolean(pendingPayment)} onClick={pay}>
+              {isPaying ? "Opening payment..." : "Pay online"}
             </button>
-            <p className="fine-print">Test checkout captures payment instantly for MVP verification.</p>
+            <p className="fine-print">Orders reach the vendor only after payment is confirmed.</p>
           </aside>
         </main>
       )}
@@ -261,7 +314,7 @@ function QuantityControl({ value, onChange }: { value: number; onChange: (quanti
   );
 }
 
-function OrderConfirmation({ order, vendor }: { order: Order; vendor: Vendor }) {
+function OrderConfirmation({ order, vendor }: { order: Order; vendor: PublicVendor }) {
   return (
     <section className="confirmation">
       <div className="success-mark">✓</div>
@@ -269,7 +322,7 @@ function OrderConfirmation({ order, vendor }: { order: Order; vendor: Vendor }) 
       <h2>Order placed</h2>
       <div className="order-code">{order.orderCode}</div>
       <p>
-        Confirmation sent to {order.customerEmail}. Show this code at {vendor.name} when your food is ready.
+        Your order is confirmed. Keep this code ready and track live status here.
       </p>
       <Link className="primary-link" to={`/order/${order.id}`}>Track live status</Link>
     </section>
@@ -310,6 +363,8 @@ function OrderStatusPage() {
         </div>
         {order.status === "READY" ? (
           <div className="ready-box">Your order is ready. Show code {order.orderCode} at pickup.</div>
+        ) : order.status === "PENDING" ? (
+          <div className="ready-box muted-box">Payment is still pending. The vendor will receive the order after payment confirmation.</div>
         ) : (
           <div className="ready-box muted-box">Keep this page open. It updates automatically.</div>
         )}
@@ -325,14 +380,14 @@ function VendorConsole() {
   const [demoVendors, setDemoVendors] = React.useState<Vendor[]>([]);
   const [summary, setSummary] = React.useState({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
-  const [loginDraft, setLoginDraft] = React.useState({ phone: "+919876543210", password: "demo123", otpCode: "" });
+  const [loginDraft, setLoginDraft] = React.useState({ phone: "", otpCode: "" });
   const [profileDraft, setProfileDraft] = React.useState({
-    name: "Ravi's Canteen",
-    phone: "+919876543210",
-    locationTag: "Office Block B, Ground Floor",
-    upiId: "ravi@upi",
+    name: "",
+    phone: "",
+    locationTag: "",
+    upiId: "",
     otpCode: "",
-    password: "demo123"
+    password: ""
   });
   const [menuDraft, setMenuDraft] = React.useState({
     id: "",
@@ -345,7 +400,11 @@ function VendorConsole() {
   });
   const [menuPhotoFile, setMenuPhotoFile] = React.useState<File | null>(null);
   const [issuedToken, setIssuedToken] = React.useState("");
-  const [otpHint, setOtpHint] = React.useState("");
+  const [loginOtpSent, setLoginOtpSent] = React.useState(false);
+  const [registerOtpSent, setRegisterOtpSent] = React.useState(false);
+  const [authMessage, setAuthMessage] = React.useState("");
+  const [error, setError] = React.useState("");
+  const showDemoShortcuts = import.meta.env.DEV;
   const isLoggedIn = Boolean(vendor && getStoredVendorToken());
 
   function goToPanel(id: string) {
@@ -396,18 +455,29 @@ function VendorConsole() {
   }, [refresh]);
 
   async function setStatus(order: Order, status: OrderStatus) {
-    const response = await updateOrderStatus(order.id, status);
-    setOrders((current) => current.map((candidate) => (candidate.id === order.id ? response.order : candidate)));
-    refresh();
+    setError("");
+    try {
+      const response = await updateOrderStatus(order.id, status);
+      setOrders((current) => current.map((candidate) => (candidate.id === order.id ? response.order : candidate)));
+      refresh();
+    } catch (statusError) {
+      setError(messageFromError(statusError));
+    }
   }
 
   async function toggleItem(item: MenuItem) {
-    const response = await updateMenuItem(item.id, { isAvailable: !item.isAvailable });
-    setMenu((current) => current.map((candidate) => (candidate.id === item.id ? response.menuItem : candidate)));
+    setError("");
+    try {
+      const response = await updateMenuItem(item.id, { isAvailable: !item.isAvailable });
+      setMenu((current) => current.map((candidate) => (candidate.id === item.id ? response.menuItem : candidate)));
+    } catch (toggleError) {
+      setError(messageFromError(toggleError));
+    }
   }
 
   async function saveMenuItem(event: React.FormEvent) {
     event.preventDefault();
+    setError("");
     const payload = {
       name: menuDraft.name,
       description: menuDraft.description,
@@ -416,22 +486,31 @@ function VendorConsole() {
       category: menuDraft.category,
       isAvailable: menuDraft.isAvailable
     };
-    if (menuDraft.id) {
-      let response = await updateMenuItem(menuDraft.id, payload);
-      if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
-      setMenu((current) => current.map((candidate) => (candidate.id === response.menuItem.id ? response.menuItem : candidate)));
-    } else {
-      let response = await createMenuItem(payload);
-      if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
-      setMenu((current) => [response.menuItem, ...current]);
+    try {
+      if (menuDraft.id) {
+        let response = await updateMenuItem(menuDraft.id, payload);
+        if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
+        setMenu((current) => current.map((candidate) => (candidate.id === response.menuItem.id ? response.menuItem : candidate)));
+      } else {
+        let response = await createMenuItem(payload);
+        if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
+        setMenu((current) => [response.menuItem, ...current]);
+      }
+      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true });
+      setMenuPhotoFile(null);
+    } catch (menuError) {
+      setError(messageFromError(menuError));
     }
-    setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true });
-    setMenuPhotoFile(null);
   }
 
   async function removeItem(item: MenuItem) {
-    await deleteMenuItem(item.id);
-    setMenu((current) => current.filter((candidate) => candidate.id !== item.id));
+    setError("");
+    try {
+      await deleteMenuItem(item.id);
+      setMenu((current) => current.filter((candidate) => candidate.id !== item.id));
+    } catch (deleteError) {
+      setError(messageFromError(deleteError));
+    }
   }
 
   function editItem(item: MenuItem) {
@@ -448,52 +527,81 @@ function VendorConsole() {
   }
 
   async function sendLoginOtp() {
-    const response = await requestVendorOtp({ phone: loginDraft.phone, purpose: "login" });
-    setOtpHint(response.devOtp ? `Dev OTP: ${response.devOtp}` : "OTP sent by SMS.");
+    setError("");
+    setAuthMessage("");
+    try {
+      const response = await requestVendorOtp({ phone: loginDraft.phone, purpose: "login" });
+      setLoginOtpSent(true);
+      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `OTP sent to ${loginDraft.phone}.`);
+    } catch (otpError) {
+      setLoginOtpSent(false);
+      setError(messageFromError(otpError));
+    }
   }
 
   async function sendRegisterOtp() {
-    const response = await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
-    setOtpHint(response.devOtp ? `Dev OTP: ${response.devOtp}` : "OTP sent by SMS.");
+    setError("");
+    setAuthMessage("");
+    try {
+      const response = await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
+      setRegisterOtpSent(true);
+      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `OTP sent to ${profileDraft.phone}.`);
+    } catch (otpError) {
+      setRegisterOtpSent(false);
+      setError(messageFromError(otpError));
+    }
   }
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
-    const response = loginDraft.otpCode
-      ? await verifyVendorOtp({ phone: loginDraft.phone, otpCode: loginDraft.otpCode })
-      : await loginVendor(loginDraft);
-    setStoredVendorToken(response.token);
-    setIssuedToken(response.token);
-    setVendor(response.vendor);
-    setProfileDraft((draft) => ({
-      ...draft,
-      name: response.vendor.name,
-      phone: response.vendor.phone,
-      locationTag: response.vendor.locationTag,
-      upiId: response.vendor.upiId
-    }));
-    socket.emit("join_vendor", { token: response.token });
-    refresh();
+    setError("");
+    try {
+      const response = await verifyVendorOtp({ phone: loginDraft.phone, otpCode: loginDraft.otpCode });
+      setStoredVendorToken(response.token);
+      setIssuedToken(response.token);
+      setVendor(response.vendor);
+      setProfileDraft((draft) => ({
+        ...draft,
+        name: response.vendor.name,
+        phone: response.vendor.phone,
+        locationTag: response.vendor.locationTag,
+        upiId: response.vendor.upiId
+      }));
+      socket.emit("join_vendor", { token: response.token });
+      refresh();
+    } catch (loginError) {
+      setError(messageFromError(loginError));
+    }
   }
 
   async function registerShop(event: React.FormEvent) {
     event.preventDefault();
-    const response = await registerVendor(profileDraft);
-    setStoredVendorToken(response.token);
-    setVendor(response.vendor);
-    setIssuedToken(response.token);
-    socket.emit("join_vendor", { token: response.token });
-    refresh();
+    setError("");
+    try {
+      const response = await registerVendor(profileDraft);
+      setStoredVendorToken(response.token);
+      setVendor(response.vendor);
+      setIssuedToken(response.token);
+      socket.emit("join_vendor", { token: response.token });
+      refresh();
+    } catch (registerError) {
+      setError(messageFromError(registerError));
+    }
   }
 
   async function updateProfile(event: React.FormEvent) {
     event.preventDefault();
-    const response = await updateVendorProfile({
-      name: profileDraft.name,
-      locationTag: profileDraft.locationTag,
-      upiId: profileDraft.upiId
-    });
-    setVendor(response.vendor);
+    setError("");
+    try {
+      const response = await updateVendorProfile({
+        name: profileDraft.name,
+        locationTag: profileDraft.locationTag,
+        upiId: profileDraft.upiId
+      });
+      setVendor(response.vendor);
+    } catch (profileError) {
+      setError(messageFromError(profileError));
+    }
   }
 
   function logout() {
@@ -503,6 +611,10 @@ function VendorConsole() {
     setMenu([]);
     setSummary({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
     setIssuedToken("");
+    setLoginOtpSent(false);
+    setRegisterOtpSent(false);
+    setAuthMessage("");
+    setError("");
     setAuthMode("entry");
   }
 
@@ -520,6 +632,12 @@ function VendorConsole() {
         </div>
       </section>
 
+      {isLoggedIn ? (
+        <div className="page-alert">
+          <ErrorBanner message={error} onDismiss={() => setError("")} />
+        </div>
+      ) : null}
+
       {!isLoggedIn ? (
         <main className="vendor-auth-layout">
           {authMode === "entry" ? (
@@ -530,11 +648,19 @@ function VendorConsole() {
                 <p className="muted">Login to manage your live queue, menu, QR code, shop details, and daily totals. New vendors can create a shop first.</p>
               </div>
               <div className="entry-actions">
-                <button className="entry-button" onClick={() => setAuthMode("login")}>
+                <button className="entry-button" onClick={() => {
+                  setAuthMode("login");
+                  setError("");
+                  setAuthMessage("");
+                }}>
                   Login to existing shop
-                  <span>Use your registered mobile number and password.</span>
+                  <span>Use your registered mobile number and OTP.</span>
                 </button>
-                <button className="entry-button secondary-entry" onClick={() => setAuthMode("signup")}>
+                <button className="entry-button secondary-entry" onClick={() => {
+                  setAuthMode("signup");
+                  setError("");
+                  setAuthMessage("");
+                }}>
                   Create a shop
                   <span>Set up shop details, UPI ID, and your first vendor account.</span>
                 </button>
@@ -548,34 +674,43 @@ function VendorConsole() {
                 <h2>Vendor login</h2>
                 <button className="text-button" onClick={() => setAuthMode("entry")}>Back</button>
               </div>
+              <ErrorBanner message={error} onDismiss={() => setError("")} />
               <form className="onboarding-form" onSubmit={login}>
                 <label>
                   Mobile number
-                  <input value={loginDraft.phone} onChange={(event) => setLoginDraft((draft) => ({ ...draft, phone: event.target.value }))} />
+                  <input required value={loginDraft.phone} onChange={(event) => {
+                    setLoginDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
+                    setLoginOtpSent(false);
+                    setAuthMessage("");
+                  }} />
                 </label>
-                <button type="button" className="quiet-button" onClick={sendLoginOtp}>Send OTP</button>
-                <label>
-                  OTP
-                  <input value={loginDraft.otpCode} onChange={(event) => setLoginDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
-                </label>
-                <label>
-                  Password fallback
-                  <input type="password" value={loginDraft.password} onChange={(event) => setLoginDraft((draft) => ({ ...draft, password: event.target.value }))} />
-                </label>
-                {otpHint ? <p className="token-note">{otpHint}</p> : null}
-                <button>Login</button>
+                <button type="button" className="quiet-button" onClick={sendLoginOtp} disabled={!loginDraft.phone}>Send OTP</button>
+                {loginOtpSent ? (
+                  <label>
+                    OTP
+                    <input required value={loginDraft.otpCode} onChange={(event) => setLoginDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
+                  </label>
+                ) : null}
+                {authMessage ? <p className="token-note">{authMessage}</p> : null}
+                <button disabled={!loginOtpSent || !loginDraft.otpCode}>Login</button>
               </form>
-              <div className="demo-vendors">
-                {demoVendors.map((demo) => (
-                  <button
-                    key={demo.id}
-                    className="small-link demo-button"
-                    onClick={() => setLoginDraft({ phone: demo.phone, password: "demo123", otpCode: "" })}
-                  >
-                    {demo.name}
-                  </button>
-                ))}
-              </div>
+              {showDemoShortcuts ? (
+                <div className="demo-vendors">
+                  {demoVendors.map((demo) => (
+                    <button
+                      key={demo.id}
+                      className="small-link demo-button"
+                      onClick={() => {
+                        setLoginDraft({ phone: demo.phone, otpCode: "" });
+                        setLoginOtpSent(false);
+                        setAuthMessage("");
+                      }}
+                    >
+                      {demo.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -585,10 +720,12 @@ function VendorConsole() {
                 <h2>Create shop</h2>
                 <button className="text-button" onClick={() => setAuthMode("entry")}>Back</button>
               </div>
+              <ErrorBanner message={error} onDismiss={() => setError("")} />
               <form className="onboarding-form" onSubmit={registerShop}>
                 <label>
                   Shop name
                   <input
+                    required
                     value={profileDraft.name}
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, name: event.target.value }))}
                   />
@@ -596,21 +733,29 @@ function VendorConsole() {
                 <label>
                   Mobile number
                   <input
+                    required
                     value={profileDraft.phone}
-                    onChange={(event) => setProfileDraft((draft) => ({ ...draft, phone: event.target.value }))}
+                    onChange={(event) => {
+                      setProfileDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
+                      setRegisterOtpSent(false);
+                      setAuthMessage("");
+                    }}
                   />
                 </label>
-                <button type="button" className="quiet-button" onClick={sendRegisterOtp}>Send OTP</button>
-                <label>
-                  OTP
-                  <input
-                    value={profileDraft.otpCode}
-                    onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))}
-                  />
-                </label>
+                <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.phone}>Send OTP</button>
+                {registerOtpSent ? (
+                  <label>
+                    OTP
+                    <input
+                      value={profileDraft.otpCode}
+                      onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))}
+                    />
+                  </label>
+                ) : null}
                 <label>
                   Location tag
                   <input
+                    required
                     value={profileDraft.locationTag}
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, locationTag: event.target.value }))}
                   />
@@ -618,6 +763,7 @@ function VendorConsole() {
                 <label>
                   UPI ID
                   <input
+                    required
                     value={profileDraft.upiId}
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, upiId: event.target.value }))}
                   />
@@ -625,13 +771,15 @@ function VendorConsole() {
                 <label>
                   Password
                   <input
+                    required
+                    minLength={6}
                     type="password"
                     value={profileDraft.password}
                     onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))}
                   />
                 </label>
-                {otpHint ? <p className="token-note">{otpHint}</p> : null}
-                <button>Create shop</button>
+                {authMessage ? <p className="token-note">{authMessage}</p> : null}
+                <button disabled={!registerOtpSent || !profileDraft.otpCode || !profileDraft.name || !profileDraft.locationTag || !profileDraft.upiId || profileDraft.password.length < 6}>Create shop</button>
               </form>
             </section>
           ) : null}
@@ -818,14 +966,14 @@ function TimelineRow({ label, time, done }: { active?: boolean; done?: boolean; 
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, hideVendorNav = false }: { children: React.ReactNode; hideVendorNav?: boolean }) {
   return (
     <div>
       <header className="topbar">
         <Link to="/" className="brand">LocalServe</Link>
         <nav>
           <Link to="/v/ravi-canteen">Customer</Link>
-          <Link to="/vendor">Vendor</Link>
+          {hideVendorNav ? null : <Link to="/vendor">Vendor</Link>}
         </nav>
       </header>
       {children}
