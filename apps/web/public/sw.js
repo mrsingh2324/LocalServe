@@ -1,21 +1,54 @@
+const CACHE_NAME = "quickorder-shell-v2";
+const PRECACHE_URLS = ["/", "/manifest.webmanifest"];
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("localserve-shell-v1").then((cache) =>
-      cache.addAll(["/", "/v/ravi-canteen", "/manifest.webmanifest"])
-    )
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => Promise.all(PRECACHE_URLS.map((url) => cache.add(url).catch(() => undefined))))
+      .then(() => self.skipWaiting())
   );
 });
 
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+function isCacheableRequest(request) {
+  if (request.method !== "GET") return false;
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch {
+    return false;
+  }
+  // Only handle same-origin http(s) requests. This skips chrome-extension://,
+  // data:, blob: and cross-origin API calls — none of which belong in the cache.
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.origin !== self.location.origin) return false;
+  return true;
+}
+
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  if (!isCacheableRequest(event.request)) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open("localserve-shell-v1").then((cache) => cache.put(event.request, copy));
+        if (response && response.ok && response.type === "basic") {
+          const copy = response.clone();
+          caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, copy))
+            .catch(() => undefined);
+        }
         return response;
       })
-      .catch(() => caches.match(event.request).then((response) => response || caches.match("/")))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
   );
 });
 
