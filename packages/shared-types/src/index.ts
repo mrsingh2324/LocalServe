@@ -38,7 +38,7 @@ export const deliveryAddressSchema = z.object({
 export const customerSchema = z.object({
   id: z.string(),
   name: z.string(),
-  phone: z.string(),
+  phone: z.string().optional(),
   email: z.string().email().optional(),
   addresses: z.array(addressSchema).default([]),
   createdAt: z.string(),
@@ -79,6 +79,7 @@ export const vendorSchema = z.object({
   slug: z.string(),
   locationTag: z.string(),
   phone: z.string(),
+  email: z.string().email().optional(),
   upiId: z.string(),
   qrUrl: z.string(),
   storefrontUrl: z.string(),
@@ -94,6 +95,7 @@ export const vendorSchema = z.object({
 
 export const publicVendorSchema = vendorSchema.omit({
   phone: true,
+  email: true,
   upiId: true
 });
 

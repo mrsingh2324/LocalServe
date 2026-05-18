@@ -1068,12 +1068,17 @@ input {
 }
 
 .order-type-toggle,
-.payment-method-toggle {
+.payment-method-toggle,
+.auth-method-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
   border: 1px solid #d8d0c1;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.auth-method-toggle {
+  margin: 12px 0 4px;
 }
 
 .toggle-btn {

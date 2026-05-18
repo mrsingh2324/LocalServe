@@ -37,7 +37,9 @@ import {
   getVendorOrders,
   getVendorQr,
   registerVendor,
+  requestCustomerEmailOtp,
   requestCustomerOtp,
+  requestVendorEmailOtp,
   requestVendorOtp,
   setStoredAdminToken,
   setStoredCustomerToken,
@@ -49,8 +51,10 @@ import {
   updateOrderStatus,
   updateVendorProfile,
   uploadMenuItemPhoto,
+  verifyCustomerEmailOtp,
   verifyCustomerOtp,
   verifyVendor,
+  verifyVendorEmailOtp,
   verifyVendorOtp
 } from "./api";
 import { buildCartLines, useCartStore } from "./cartStore";
@@ -399,7 +403,9 @@ function HomePage() {
 function CustomerLoginPage() {
   const { customer, setCustomer } = useCustomer();
   const navigate = useNavigate();
+  const [method, setMethod] = React.useState<"phone" | "email">("phone");
   const [phone, setPhone] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [otp, setOtp] = React.useState("");
   const [name, setName] = React.useState("");
   const [otpSent, setOtpSent] = React.useState(false);
@@ -410,11 +416,21 @@ function CustomerLoginPage() {
 
   if (customer) return <Navigate to="/" replace />;
 
+  const identifier = method === "phone" ? phone : email;
+
+  function switchMethod(next: "phone" | "email") {
+    setMethod(next);
+    setOtpSent(false);
+    setOtp("");
+    setDevOtp("");
+    setError("");
+  }
+
   async function sendOtp() {
     setError("");
     setLoading(true);
     try {
-      const res = await requestCustomerOtp(phone);
+      const res = method === "phone" ? await requestCustomerOtp(phone) : await requestCustomerEmailOtp(email);
       setOtpSent(true);
       if (res.devOtp) setDevOtp(res.devOtp);
     } catch (err) {
@@ -429,7 +445,9 @@ function CustomerLoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await verifyCustomerOtp({ phone, otpCode: otp, name: name || undefined });
+      const res = method === "phone"
+        ? await verifyCustomerOtp({ phone, otpCode: otp, name: name || undefined })
+        : await verifyCustomerEmailOtp({ email, otpCode: otp, name: name || undefined });
       setStoredCustomerToken(res.token);
       setCustomer(res.customer);
       setIsNew(res.isNew);
@@ -446,28 +464,57 @@ function CustomerLoginPage() {
       <main className="auth-page">
         <section className="panel auth-panel">
           <h2>Login / Sign up</h2>
-          <p className="muted">Enter your mobile number to get started. We'll send an OTP.</p>
+          <p className="muted">Continue with your mobile number or email. We'll send you a one-time code.</p>
           <ErrorBanner message={error} onDismiss={() => setError("")} />
-          <form className="onboarding-form" onSubmit={verify}>
-            <label>
+          <div className="auth-method-toggle">
+            <button
+              type="button"
+              className={method === "phone" ? "toggle-btn active" : "toggle-btn"}
+              onClick={() => switchMethod("phone")}
+            >
               Mobile number
-              <input
-                required
-                type="tel"
-                value={phone}
-                onChange={(e) => { setPhone(e.target.value); setOtpSent(false); setDevOtp(""); }}
-                placeholder="+91..."
-              />
-            </label>
+            </button>
+            <button
+              type="button"
+              className={method === "email" ? "toggle-btn active" : "toggle-btn"}
+              onClick={() => switchMethod("email")}
+            >
+              Email
+            </button>
+          </div>
+          <form className="onboarding-form" onSubmit={verify}>
+            {method === "phone" ? (
+              <label>
+                Mobile number
+                <input
+                  required
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => { setPhone(e.target.value); setOtpSent(false); setDevOtp(""); }}
+                  placeholder="+91..."
+                />
+              </label>
+            ) : (
+              <label>
+                Email address
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setOtpSent(false); setDevOtp(""); }}
+                  placeholder="you@example.com"
+                />
+              </label>
+            )}
             {!otpSent ? (
-              <button type="button" onClick={sendOtp} disabled={!phone || loading}>
-                {loading ? "Sending..." : "Send OTP"}
+              <button type="button" onClick={sendOtp} disabled={!identifier || loading}>
+                {loading ? "Sending..." : `Send code${method === "email" ? " to email" : ""}`}
               </button>
             ) : (
               <>
                 <label>
-                  OTP
-                  <input required value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6-digit OTP" />
+                  One-time code
+                  <input required value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6-digit code" />
                 </label>
                 {devOtp ? <p className="token-note">Dev OTP: {devOtp}</p> : null}
                 {isNew ? (
@@ -480,7 +527,7 @@ function CustomerLoginPage() {
                   {loading ? "Verifying..." : "Continue"}
                 </button>
                 <button type="button" className="quiet-button" onClick={sendOtp} disabled={loading}>
-                  Resend OTP
+                  Resend code
                 </button>
               </>
             )}
@@ -1127,10 +1174,12 @@ function VendorConsole() {
   const [demoVendors, setDemoVendors] = React.useState<Vendor[]>([]);
   const [summary, setSummary] = React.useState({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
-  const [loginDraft, setLoginDraft] = React.useState({ phone: "", otpCode: "" });
+  const [loginDraft, setLoginDraft] = React.useState({ phone: "", email: "", otpCode: "" });
+  const [loginMethod, setLoginMethod] = React.useState<"phone" | "email">("phone");
   const [profileDraft, setProfileDraft] = React.useState({
     name: "",
     phone: "",
+    email: "",
     locationTag: "",
     upiId: "",
     otpCode: "",
@@ -1190,6 +1239,7 @@ function VendorConsole() {
             ...draft,
             name: data.vendor.name,
             phone: data.vendor.phone,
+            email: data.vendor.email ?? "",
             locationTag: data.vendor.locationTag,
             upiId: data.vendor.upiId,
             category: data.vendor.category ?? "Food & Snacks",
@@ -1292,9 +1342,12 @@ function VendorConsole() {
     setError("");
     setAuthMessage("");
     try {
-      const response = await requestVendorOtp({ phone: loginDraft.phone, purpose: "login" });
+      const response = loginMethod === "phone"
+        ? await requestVendorOtp({ phone: loginDraft.phone, purpose: "login" })
+        : await requestVendorEmailOtp(loginDraft.email);
       setLoginOtpSent(true);
-      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `OTP sent to ${loginDraft.phone}.`);
+      const target = loginMethod === "phone" ? loginDraft.phone : loginDraft.email;
+      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `Code sent to ${target}.`);
     } catch (otpError) {
       setLoginOtpSent(false);
       setError(messageFromError(otpError));
@@ -1318,7 +1371,9 @@ function VendorConsole() {
     event.preventDefault();
     setError("");
     try {
-      const response = await verifyVendorOtp({ phone: loginDraft.phone, otpCode: loginDraft.otpCode });
+      const response = loginMethod === "phone"
+        ? await verifyVendorOtp({ phone: loginDraft.phone, otpCode: loginDraft.otpCode })
+        : await verifyVendorEmailOtp({ email: loginDraft.email, otpCode: loginDraft.otpCode });
       setStoredVendorToken(response.token);
       setIssuedToken(response.token);
       setVendor(response.vendor);
@@ -1326,6 +1381,7 @@ function VendorConsole() {
         ...draft,
         name: response.vendor.name,
         phone: response.vendor.phone,
+        email: response.vendor.email ?? "",
         locationTag: response.vendor.locationTag,
         upiId: response.vendor.upiId,
         category: response.vendor.category ?? "Food & Snacks",
@@ -1365,6 +1421,7 @@ function VendorConsole() {
         name: profileDraft.name,
         locationTag: profileDraft.locationTag,
         upiId: profileDraft.upiId,
+        email: profileDraft.email,
         category: profileDraft.category,
         isOpen: profileDraft.isOpen,
         deliveryEnabled: profileDraft.deliveryEnabled,
@@ -1441,19 +1498,53 @@ function VendorConsole() {
                 <button className="text-button" onClick={() => setAuthMode("entry")}>Back</button>
               </div>
               <ErrorBanner message={error} onDismiss={() => setError("")} />
-              <form className="onboarding-form" onSubmit={login}>
-                <label>
+              <div className="auth-method-toggle">
+                <button
+                  type="button"
+                  className={loginMethod === "phone" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setLoginMethod("phone"); setLoginOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
                   Mobile number
-                  <input required value={loginDraft.phone} onChange={(event) => {
-                    setLoginDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
-                    setLoginOtpSent(false);
-                    setAuthMessage("");
-                  }} />
-                </label>
-                <button type="button" className="quiet-button" onClick={sendLoginOtp} disabled={!loginDraft.phone}>Send OTP</button>
+                </button>
+                <button
+                  type="button"
+                  className={loginMethod === "email" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setLoginMethod("email"); setLoginOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
+                  Email
+                </button>
+              </div>
+              <form className="onboarding-form" onSubmit={login}>
+                {loginMethod === "phone" ? (
+                  <label>
+                    Mobile number
+                    <input required value={loginDraft.phone} onChange={(event) => {
+                      setLoginDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
+                      setLoginOtpSent(false);
+                      setAuthMessage("");
+                    }} />
+                  </label>
+                ) : (
+                  <label>
+                    Email address
+                    <input required type="email" value={loginDraft.email} onChange={(event) => {
+                      setLoginDraft((draft) => ({ ...draft, email: event.target.value, otpCode: "" }));
+                      setLoginOtpSent(false);
+                      setAuthMessage("");
+                    }} />
+                  </label>
+                )}
+                <button
+                  type="button"
+                  className="quiet-button"
+                  onClick={sendLoginOtp}
+                  disabled={loginMethod === "phone" ? !loginDraft.phone : !loginDraft.email}
+                >
+                  Send code
+                </button>
                 {loginOtpSent ? (
                   <label>
-                    OTP
+                    One-time code
                     <input required value={loginDraft.otpCode} onChange={(event) => setLoginDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
                   </label>
                 ) : null}
@@ -1467,7 +1558,8 @@ function VendorConsole() {
                       key={demo.id}
                       className="small-link demo-button"
                       onClick={() => {
-                        setLoginDraft({ phone: demo.phone, otpCode: "" });
+                        setLoginMethod("phone");
+                        setLoginDraft({ phone: demo.phone, email: "", otpCode: "" });
                         setLoginOtpSent(false);
                         setAuthMessage("");
                       }}
@@ -1510,6 +1602,10 @@ function VendorConsole() {
                 <label>
                   Location / area
                   <input required value={profileDraft.locationTag} onChange={(event) => setProfileDraft((draft) => ({ ...draft, locationTag: event.target.value }))} />
+                </label>
+                <label>
+                  Email (optional — enables email login)
+                  <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
                 </label>
                 <label>
                   UPI ID
@@ -1585,6 +1681,10 @@ function VendorConsole() {
               <label>
                 Mobile number
                 <input disabled value={profileDraft.phone} />
+              </label>
+              <label>
+                Email (used for email login)
+                <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
               </label>
               <label>
                 Location / area
