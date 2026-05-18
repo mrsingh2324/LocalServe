@@ -94,6 +94,7 @@ const storagePublicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL;
 const otpDevCode = process.env.OTP_DEV_CODE ?? "123456";
 const otpTtlMs = Number(process.env.OTP_TTL_MINUTES ?? 5) * 60 * 1000;
 const adminEmail = (process.env.ADMIN_EMAIL ?? "admin@localserve.local").toLowerCase();
+const adminConfigured = process.env.NODE_ENV !== "production" || Boolean(process.env.ADMIN_PASSWORD);
 const adminPasswordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD ?? "admin123", 10);
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
@@ -155,7 +156,9 @@ function validateRuntimeConfig() {
   requireEnv("STORAGE_BUCKET", storageBucket);
   requireEnv("STORAGE_ACCESS_KEY_ID", storageAccessKeyId);
   requireEnv("STORAGE_SECRET_ACCESS_KEY", storageSecretAccessKey);
-  requireEnv("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
+  if (!adminConfigured) {
+    console.warn("ADMIN_PASSWORD is not set — the admin console is disabled. Set ADMIN_PASSWORD to enable it.");
+  }
 }
 
 const demoPasswordHash = bcrypt.hashSync("demo123", 10);
@@ -1233,6 +1236,10 @@ app.post("/vendor/kyc", requireVendor, asyncHandler(async (req, res) => {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 app.post("/auth/admin/login", authLimiter, asyncHandler(async (req, res) => {
+  if (!adminConfigured) {
+    res.status(403).json({ error: "Admin console is not configured. Set ADMIN_PASSWORD to enable it." });
+    return;
+  }
   const body = adminLoginSchema.parse(req.body);
   if (body.email.toLowerCase() !== adminEmail || !bcrypt.compareSync(body.password, adminPasswordHash)) {
     res.status(401).json({ error: "Invalid admin credentials" });
