@@ -94,6 +94,7 @@ const storagePublicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL;
 const otpDevCode = process.env.OTP_DEV_CODE ?? "123456";
 const otpTtlMs = Number(process.env.OTP_TTL_MINUTES ?? 5) * 60 * 1000;
 const adminEmail = (process.env.ADMIN_EMAIL ?? "admin@localserve.local").toLowerCase();
+const adminConfigured = process.env.NODE_ENV !== "production" || Boolean(process.env.ADMIN_PASSWORD);
 const adminPasswordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD ?? "admin123", 10);
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
@@ -155,7 +156,9 @@ function validateRuntimeConfig() {
   requireEnv("STORAGE_BUCKET", storageBucket);
   requireEnv("STORAGE_ACCESS_KEY_ID", storageAccessKeyId);
   requireEnv("STORAGE_SECRET_ACCESS_KEY", storageSecretAccessKey);
-  requireEnv("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
+  if (!adminConfigured) {
+    console.warn("ADMIN_PASSWORD is not set — the admin console is disabled. Set ADMIN_PASSWORD to enable it.");
+  }
 }
 
 const demoPasswordHash = bcrypt.hashSync("demo123", 10);
@@ -295,6 +298,7 @@ const dayHoursBodySchema = z.object({
 const vendorRegistrationSchema = z.object({
   name: z.string().min(2).max(120),
   phone: z.string().min(10).max(15),
+  email: z.string().email().optional().or(z.literal("")),
   locationTag: z.string().min(2).max(120),
   upiId: z.string().min(3).max(80),
   otpCode: z.string().min(4).max(8),
@@ -304,6 +308,7 @@ const vendorProfileSchema = z.object({
   name: z.string().min(2).max(120),
   locationTag: z.string().min(2).max(120),
   upiId: z.string().min(3).max(80),
+  email: z.string().email().optional().or(z.literal("")),
   category: z.string().min(1).max(60).optional(),
   isOpen: z.boolean().optional(),
   deliveryEnabled: z.boolean().optional(),
@@ -323,6 +328,14 @@ const otpRequestSchema = z.object({
 const otpVerifySchema = z.object({
   phone: z.string().min(10).max(15),
   otpCode: z.string().min(4).max(8)
+});
+const emailOtpRequestSchema = z.object({
+  email: z.string().email()
+});
+const emailOtpVerifySchema = z.object({
+  email: z.string().email(),
+  otpCode: z.string().min(4).max(8),
+  name: z.string().min(1).max(120).optional()
 });
 const customerOtpRequestSchema = z.object({
   phone: z.string().min(10).max(15)
@@ -446,10 +459,17 @@ function ensureDemoSeeds() {
     if (!menuItems.some((item) => item.id === seed.id)) menuItems.push(seed);
   }
 
+  const demoEmails: Record<string, string> = {
+    vendor_ravi: "ravi@localserve.local",
+    vendor_meera: "meera@localserve.local"
+  };
   for (const demoId of ["vendor_ravi", "vendor_meera"]) {
     const demoVendor = vendors.find((vendor) => vendor.id === demoId);
     if (demoVendor && !demoVendor.kyc) {
       demoVendor.kyc = { ownerName: demoVendor.name, status: "VERIFIED", reviewedAt: new Date().toISOString() };
+    }
+    if (demoVendor && !demoVendor.email) {
+      demoVendor.email = demoEmails[demoId];
     }
   }
 }
@@ -494,6 +514,35 @@ function createOtpCode() {
   if (process.env.NODE_ENV !== "production") return otpDevCode;
   if (!twilioClient) throw Object.assign(new Error("Twilio is not configured for production OTP delivery"), { status: 503 });
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function createEmailOtpCode() {
+  if (process.env.NODE_ENV !== "production") return otpDevCode;
+  if (!mailTransporter) throw Object.assign(new Error("Email delivery is not configured for production OTP"), { status: 503 });
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function sendEmailOtp(email: string, purpose: string) {
+  const code = createEmailOtpCode();
+  await setOtpChallenge(email, purpose, {
+    codeHash: hashOtp(email, purpose, code),
+    expiresAt: Date.now() + otpTtlMs,
+    attempts: 0
+  });
+  if (mailTransporter) {
+    try {
+      await mailTransporter.sendMail({
+        to: email,
+        from: emailFrom,
+        subject: "Your QuickOrder login code",
+        text: `Your QuickOrder login code is ${code}. It expires in ${Math.round(otpTtlMs / 60000)} minutes.`
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV === "production") throw error;
+      console.warn("Email OTP delivery failed (dev mode)", error);
+    }
+  }
+  return code;
 }
 
 async function setOtpChallenge(phone: string, purpose: string, challenge: { codeHash: string; expiresAt: number; attempts: number }) {
@@ -884,6 +933,7 @@ async function loadState() {
         slug: vendor.slug,
         locationTag: vendor.locationTag,
         phone: vendor.phone,
+        email: (vendor as unknown as { email?: string }).email,
         upiId: vendor.upiId,
         qrUrl: vendor.qrUrl ?? "",
         storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`,
@@ -1014,7 +1064,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, email: vendor.email, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
         { upsert: true }
       );
     }
@@ -1134,6 +1184,38 @@ app.post("/auth/vendor/otp/verify", authLimiter, asyncHandler(async (req, res) =
   res.json({ vendor: await buildVendorResponse(vendor), token: createVendorToken(vendor.id) });
 }));
 
+app.post("/auth/vendor/email/otp/request", authLimiter, asyncHandler(async (req, res) => {
+  const { email } = emailOtpRequestSchema.parse(req.body);
+  const normalized = email.toLowerCase();
+  const vendor = vendors.find((candidate) => candidate.email?.toLowerCase() === normalized);
+  if (!vendor) {
+    res.status(404).json({ error: "No shop is registered with this email. Add an email in your shop profile first." });
+    return;
+  }
+  const code = await sendEmailOtp(normalized, "vendor-email");
+  res.json({
+    status: "sent",
+    channel: "email",
+    expiresInSeconds: Math.round(otpTtlMs / 1000),
+    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+  });
+}));
+
+app.post("/auth/vendor/email/otp/verify", authLimiter, asyncHandler(async (req, res) => {
+  const body = emailOtpVerifySchema.parse(req.body);
+  const normalized = body.email.toLowerCase();
+  const vendor = vendors.find((candidate) => candidate.email?.toLowerCase() === normalized);
+  if (!vendor) {
+    res.status(404).json({ error: "No shop is registered with this email." });
+    return;
+  }
+  if (!(await verifyOtp(normalized, "vendor-email", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+  res.json({ vendor: await buildVendorResponse(vendor), token: createVendorToken(vendor.id) });
+}));
+
 app.post("/auth/vendor/login", authLimiter, asyncHandler(async (req, res) => {
   if (process.env.NODE_ENV === "production" && process.env.ENABLE_PASSWORD_LOGIN !== "true") {
     res.status(403).json({ error: "Password login is disabled. Use OTP login." });
@@ -1159,6 +1241,11 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     res.status(401).json({ error: "Invalid or expired OTP" });
     return;
   }
+  const email = body.email ? body.email.toLowerCase() : undefined;
+  if (email && vendors.some((candidate) => candidate.email?.toLowerCase() === email)) {
+    res.status(409).json({ error: "Another shop already uses this email." });
+    return;
+  }
   const slug = uniqueSlug(body.name);
   const vendor: StoredVendor = {
     id: crypto.randomUUID(),
@@ -1167,6 +1254,7 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     name: body.name,
     slug,
     phone: body.phone,
+    email,
     locationTag: body.locationTag,
     upiId: body.upiId,
     storefrontUrl: `${publicAppUrl}/v/${slug}`,
@@ -1196,11 +1284,19 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
     return;
   }
   const body = vendorProfileSchema.parse(req.body);
+  if (body.email) {
+    const normalized = body.email.toLowerCase();
+    if (vendors.some((candidate) => candidate.id !== vendor.id && candidate.email?.toLowerCase() === normalized)) {
+      res.status(409).json({ error: "Another shop already uses this email." });
+      return;
+    }
+  }
   Object.assign(vendor, {
     name: body.name,
     locationTag: body.locationTag,
     upiId: body.upiId,
     storefrontUrl: `${publicAppUrl}/v/${vendor.slug}`,
+    ...(body.email !== undefined && { email: body.email ? body.email.toLowerCase() : undefined }),
     ...(body.category !== undefined && { category: body.category }),
     ...(body.isOpen !== undefined && { isOpen: body.isOpen }),
     ...(body.deliveryEnabled !== undefined && { deliveryEnabled: body.deliveryEnabled }),
@@ -1233,6 +1329,10 @@ app.post("/vendor/kyc", requireVendor, asyncHandler(async (req, res) => {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 app.post("/auth/admin/login", authLimiter, asyncHandler(async (req, res) => {
+  if (!adminConfigured) {
+    res.status(403).json({ error: "Admin console is not configured. Set ADMIN_PASSWORD to enable it." });
+    return;
+  }
   const body = adminLoginSchema.parse(req.body);
   if (body.email.toLowerCase() !== adminEmail || !bcrypt.compareSync(body.password, adminPasswordHash)) {
     res.status(401).json({ error: "Invalid admin credentials" });
@@ -1363,6 +1463,46 @@ app.post("/auth/customer/otp/verify", authLimiter, asyncHandler(async (req, res)
   } else if (body.name && body.name !== "Customer") {
     customer.name = body.name;
     if (body.email) customer.email = body.email;
+    await persistState();
+  }
+
+  res.json({ customer: publicCustomer(customer), token: createCustomerToken(customer.id), isNew });
+}));
+
+app.post("/auth/customer/email/otp/request", authLimiter, asyncHandler(async (req, res) => {
+  const { email } = emailOtpRequestSchema.parse(req.body);
+  const code = await sendEmailOtp(email.toLowerCase(), "customer-email");
+  res.json({
+    status: "sent",
+    channel: "email",
+    expiresInSeconds: Math.round(otpTtlMs / 1000),
+    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+  });
+}));
+
+app.post("/auth/customer/email/otp/verify", authLimiter, asyncHandler(async (req, res) => {
+  const body = emailOtpVerifySchema.parse(req.body);
+  const email = body.email.toLowerCase();
+  if (!(await verifyOtp(email, "customer-email", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+
+  let customer = customers.find((c) => c.email?.toLowerCase() === email);
+  const isNew = !customer;
+
+  if (!customer) {
+    customer = {
+      id: crypto.randomUUID(),
+      name: body.name ?? "Customer",
+      email,
+      addresses: [],
+      createdAt: new Date().toISOString()
+    };
+    customers.push(customer);
+    await persistState();
+  } else if (body.name && body.name !== "Customer" && customer.name === "Customer") {
+    customer.name = body.name;
     await persistState();
   }
 

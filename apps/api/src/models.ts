@@ -59,6 +59,7 @@ const vendorSchema = new Schema(
     slug: { type: String, required: true, unique: true, index: true },
     locationTag: { type: String, required: true },
     phone: { type: String, required: true, unique: true, index: true },
+    email: { type: String, index: true },
     upiId: { type: String, required: true },
     qrUrl: { type: String, default: "" },
     passwordHash: { type: String, required: true },
@@ -158,8 +159,8 @@ const customerSchema = new Schema(
   {
     _id: { type: String, required: true },
     name: { type: String, required: true },
-    phone: { type: String, required: true, unique: true, index: true },
-    email: { type: String },
+    phone: { type: String, index: true, unique: true, sparse: true },
+    email: { type: String, index: true, sparse: true },
     addresses: { type: [savedAddressSchema], default: [] }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }

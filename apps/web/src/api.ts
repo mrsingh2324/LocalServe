@@ -108,8 +108,22 @@ export function getShops(params?: { category?: string; q?: string; deliveryOnly?
 
 // ── Vendor Auth ───────────────────────────────────────────────────────────────
 
-export function registerVendor(payload: { name: string; phone: string; locationTag: string; upiId: string; otpCode: string; password?: string }) {
+export function registerVendor(payload: { name: string; phone: string; email?: string; locationTag: string; upiId: string; otpCode: string; password?: string }) {
   return request<{ vendor: Vendor; token: string }>("/vendor/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function requestVendorEmailOtp(email: string) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/vendor/email/otp/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function verifyVendorEmailOtp(payload: { email: string; otpCode: string }) {
+  return request<{ vendor: Vendor; token: string }>("/auth/vendor/email/otp/verify", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -150,6 +164,7 @@ export function updateVendorProfile(payload: {
   name: string;
   locationTag: string;
   upiId: string;
+  email?: string;
   category?: string;
   isOpen?: boolean;
   deliveryEnabled?: boolean;
@@ -176,6 +191,20 @@ export function requestCustomerOtp(phone: string) {
 
 export function verifyCustomerOtp(payload: { phone: string; otpCode: string; name?: string; email?: string }) {
   return request<{ customer: Customer; token: string; isNew: boolean }>("/auth/customer/otp/verify", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function requestCustomerEmailOtp(email: string) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/customer/email/otp/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function verifyCustomerEmailOtp(payload: { email: string; otpCode: string; name?: string }) {
+  return request<{ customer: Customer; token: string; isNew: boolean }>("/auth/customer/email/otp/verify", {
     method: "POST",
     body: JSON.stringify(payload)
   });
