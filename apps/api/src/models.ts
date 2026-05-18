@@ -31,6 +31,15 @@ const savedAddressSchema = new Schema(
   { _id: false }
 );
 
+const dayHoursSchema = new Schema(
+  {
+    closed: { type: Boolean, default: false },
+    open: { type: String, default: "09:00" },
+    close: { type: String, default: "21:00" }
+  },
+  { _id: false }
+);
+
 const vendorSchema = new Schema(
   {
     _id: { type: String, required: true },
@@ -46,7 +55,9 @@ const vendorSchema = new Schema(
     isOpen: { type: Boolean, default: true },
     deliveryEnabled: { type: Boolean, default: false },
     deliveryFeeFlat: { type: Number, default: 0 },
-    bannerUrl: { type: String }
+    bannerUrl: { type: String },
+    operatingHours: { type: [dayHoursSchema], default: undefined },
+    acceptWindowMinutes: { type: Number, default: 15 }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
 );
@@ -60,7 +71,8 @@ const menuItemSchema = new Schema(
     price: { type: Number, required: true },
     photoUrl: { type: String, required: true },
     category: { type: String, required: true },
-    isAvailable: { type: Boolean, default: true }
+    isAvailable: { type: Boolean, default: true },
+    stockQuantity: { type: Number }
   },
   { timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }
 );

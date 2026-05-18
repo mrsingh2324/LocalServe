@@ -29,7 +29,7 @@ import {
   VendorModel,
   connectMongo
 } from "./models.js";
-import type { Address, Customer, DeliveryAddress, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, DeliveryAddress, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
 
 type StoredVendor = Vendor & { passwordHash: string };
 type StoredCustomer = Customer & { passwordHash?: string };
@@ -264,7 +264,13 @@ const menuItemBodySchema = z.object({
   price: z.number().nonnegative(),
   photoUrl: z.string().url(),
   category: z.string().min(1),
-  isAvailable: z.boolean().default(true)
+  isAvailable: z.boolean().default(true),
+  stockQuantity: z.number().int().nonnegative().optional()
+});
+const dayHoursBodySchema = z.object({
+  closed: z.boolean(),
+  open: z.string().regex(/^\d{2}:\d{2}$/),
+  close: z.string().regex(/^\d{2}:\d{2}$/)
 });
 const vendorRegistrationSchema = z.object({
   name: z.string().min(2).max(120),
@@ -282,7 +288,9 @@ const vendorProfileSchema = z.object({
   isOpen: z.boolean().optional(),
   deliveryEnabled: z.boolean().optional(),
   deliveryFeeFlat: z.number().nonnegative().optional(),
-  bannerUrl: z.string().url().optional().or(z.literal(""))
+  bannerUrl: z.string().url().optional().or(z.literal("")),
+  operatingHours: z.array(dayHoursBodySchema).length(7).optional(),
+  acceptWindowMinutes: z.number().int().min(1).max(240).optional()
 });
 const loginSchema = z.object({
   phone: z.string().min(10),
@@ -409,10 +417,11 @@ function publicStorefrontVendor(vendor: Vendor) {
     qrUrl: vendor.qrUrl,
     storefrontUrl: vendor.storefrontUrl,
     category: vendor.category ?? "General Store",
-    isOpen: vendor.isOpen ?? true,
+    isOpen: isVendorOpenNow(vendor),
     deliveryEnabled: vendor.deliveryEnabled ?? false,
     deliveryFeeFlat: vendor.deliveryFeeFlat ?? 0,
-    bannerUrl: vendor.bannerUrl
+    bannerUrl: vendor.bannerUrl,
+    operatingHours: vendor.operatingHours
   };
 }
 
@@ -612,8 +621,12 @@ async function buildVendorResponse(vendor: StoredVendor) {
   return { ...publicVendor(vendor), qrUrl };
 }
 
+function inStock(item: MenuItem) {
+  return typeof item.stockQuantity !== "number" || item.stockQuantity > 0;
+}
+
 function vendorMenu(vendorId: string, availableOnly = false) {
-  return menuItems.filter((item) => item.vendorId === vendorId && (!availableOnly || item.isAvailable));
+  return menuItems.filter((item) => item.vendorId === vendorId && (!availableOnly || (item.isAvailable && inStock(item))));
 }
 
 function vendorOrders(vendorId: string) {
@@ -624,16 +637,71 @@ function customerOrders(customerId: string) {
   return [...orders.values()].filter((order) => order.customerId === customerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-function expireStalePendingOrders() {
-  const staleBefore = Date.now() - 30 * 60 * 1000;
-  let changed = false;
-  for (const order of orders.values()) {
-    if (order.status === "PENDING" && new Date(order.createdAt).getTime() < staleBefore) {
-      orders.set(order.id, { ...order, status: "CANCELLED" });
-      changed = true;
+function istNow() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
+
+function isVendorOpenNow(vendor: Pick<Vendor, "isOpen" | "operatingHours">) {
+  if (!vendor.isOpen) return false;
+  const hours = vendor.operatingHours;
+  if (!hours || hours.length !== 7) return true;
+  const now = istNow();
+  const today = hours[now.getDay()];
+  if (!today || today.closed) return false;
+  const [openH, openM] = today.open.split(":").map(Number);
+  const [closeH, closeM] = today.close.split(":").map(Number);
+  if ([openH, openM, closeH, closeM].some(Number.isNaN)) return true;
+  const current = now.getHours() * 60 + now.getMinutes();
+  return current >= openH * 60 + openM && current < closeH * 60 + closeM;
+}
+
+function restockOrder(order: Order) {
+  for (const line of order.items) {
+    const item = menuItems.find((candidate) => candidate.id === line.menuItemId);
+    if (item && typeof item.stockQuantity === "number") {
+      item.stockQuantity += line.quantity;
     }
   }
-  return changed;
+}
+
+async function issueRefundIfNeeded(order: Order): Promise<string | undefined> {
+  if (razorpayClient && order.paymentMethod === "online" && order.paymentId && !order.paymentId.startsWith("pay_test_") && !order.paymentId.startsWith("cash_")) {
+    try {
+      const refund = await razorpayClient.payments.refund(order.paymentId, { amount: Math.round(order.totalAmount * 100) });
+      return refund.id;
+    } catch (refundError) {
+      console.error("Razorpay refund failed", refundError);
+    }
+  }
+  return undefined;
+}
+
+async function runOrderMaintenance() {
+  const now = Date.now();
+  let changed = false;
+  for (const order of orders.values()) {
+    if (order.status === "PENDING" && new Date(order.createdAt).getTime() < now - 30 * 60 * 1000) {
+      restockOrder(order);
+      const cancelled: Order = { ...order, status: "CANCELLED" };
+      orders.set(order.id, cancelled);
+      io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
+      io.to(`order:${order.id}`).emit("order_updated", cancelled);
+      changed = true;
+    } else if (order.status === "CONFIRMED") {
+      const vendor = getVendorById(order.vendorId);
+      const windowMinutes = vendor?.acceptWindowMinutes ?? 15;
+      if (new Date(order.createdAt).getTime() < now - windowMinutes * 60 * 1000) {
+        restockOrder(order);
+        await issueRefundIfNeeded(order);
+        const cancelled: Order = { ...order, status: "CANCELLED" };
+        orders.set(order.id, cancelled);
+        io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
+        io.to(`order:${order.id}`).emit("order_updated", cancelled);
+        changed = true;
+      }
+    }
+  }
+  if (changed) await persistState();
 }
 
 function extensionForMimeType(mimetype: string) {
@@ -730,7 +798,9 @@ async function loadState() {
         isOpen: (vendor as unknown as { isOpen?: boolean }).isOpen ?? true,
         deliveryEnabled: (vendor as unknown as { deliveryEnabled?: boolean }).deliveryEnabled ?? false,
         deliveryFeeFlat: (vendor as unknown as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0,
-        bannerUrl: (vendor as unknown as { bannerUrl?: string }).bannerUrl
+        bannerUrl: (vendor as unknown as { bannerUrl?: string }).bannerUrl,
+        operatingHours: (vendor as unknown as { operatingHours?: DayHours[] }).operatingHours,
+        acceptWindowMinutes: (vendor as unknown as { acceptWindowMinutes?: number }).acceptWindowMinutes ?? 15
       }));
       menuItems = dbMenuItems.map((item) => ({
         id: String(item._id),
@@ -740,7 +810,8 @@ async function loadState() {
         price: item.price,
         photoUrl: item.photoUrl,
         category: item.category,
-        isAvailable: item.isAvailable
+        isAvailable: item.isAvailable,
+        stockQuantity: (item as unknown as { stockQuantity?: number }).stockQuantity
       }));
       orders.clear();
       for (const order of dbOrders) {
@@ -833,7 +904,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes } },
         { upsert: true }
       );
     }
@@ -896,7 +967,7 @@ app.get("/shops", asyncHandler(async (req, res) => {
     slug: v.slug,
     locationTag: v.locationTag,
     category: v.category ?? "General Store",
-    isOpen: v.isOpen ?? true,
+    isOpen: isVendorOpenNow(v),
     deliveryEnabled: v.deliveryEnabled ?? false,
     deliveryFeeFlat: v.deliveryFeeFlat ?? 0,
     storefrontUrl: `${publicAppUrl}/v/${v.slug}`,
@@ -1014,7 +1085,9 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
     ...(body.isOpen !== undefined && { isOpen: body.isOpen }),
     ...(body.deliveryEnabled !== undefined && { deliveryEnabled: body.deliveryEnabled }),
     ...(body.deliveryFeeFlat !== undefined && { deliveryFeeFlat: body.deliveryFeeFlat }),
-    ...(body.bannerUrl !== undefined && { bannerUrl: body.bannerUrl || undefined })
+    ...(body.bannerUrl !== undefined && { bannerUrl: body.bannerUrl || undefined }),
+    ...(body.operatingHours !== undefined && { operatingHours: body.operatingHours }),
+    ...(body.acceptWindowMinutes !== undefined && { acceptWindowMinutes: body.acceptWindowMinutes })
   });
   await persistState();
   res.json({ vendor: await buildVendorResponse(vendor) });
@@ -1114,7 +1187,7 @@ app.delete("/customer/addresses/:id", requireCustomer, asyncHandler(async (req, 
 }));
 
 app.get("/customer/orders", requireCustomer, asyncHandler(async (req, res) => {
-  if (expireStalePendingOrders()) await persistState();
+  await runOrderMaintenance();
   const customerId = getAuthedCustomerId(req);
   if (!customerId) {
     res.json({ orders: [] });
@@ -1178,10 +1251,17 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
     res.status(400).json({ error: "Delivery address is required for delivery orders" });
     return;
   }
+  if (!isVendorOpenNow(vendor)) {
+    res.status(400).json({ error: "This shop is currently closed and not accepting orders" });
+    return;
+  }
 
   const lines: OrderLine[] = body.items.map((cartItem) => {
     const menuItem = menuItems.find((item) => item.vendorId === vendor.id && item.id === cartItem.menuItemId && item.isAvailable);
     if (!menuItem) throw Object.assign(new Error(`Menu item unavailable: ${cartItem.menuItemId}`), { status: 400 });
+    if (typeof menuItem.stockQuantity === "number" && menuItem.stockQuantity < cartItem.quantity) {
+      throw Object.assign(new Error(menuItem.stockQuantity === 0 ? `${menuItem.name} is out of stock` : `Only ${menuItem.stockQuantity} ${menuItem.name} left in stock`), { status: 400 });
+    }
     return { menuItemId: menuItem.id, name: menuItem.name, quantity: cartItem.quantity, unitPrice: menuItem.price, lineTotal: menuItem.price * cartItem.quantity };
   });
 
@@ -1227,6 +1307,12 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
   }
 
   orders.set(order.id, order);
+  for (const line of lines) {
+    const item = menuItems.find((candidate) => candidate.id === line.menuItemId);
+    if (item && typeof item.stockQuantity === "number") {
+      item.stockQuantity = Math.max(0, item.stockQuantity - line.quantity);
+    }
+  }
   await persistState();
   if (isCash || !razorpayClient) {
     io.to(`vendor:${vendor.id}`).emit("new_order", order);
@@ -1287,15 +1373,8 @@ app.post("/orders/:id/cancel", optionalCustomer, asyncHandler(async (req, res) =
     return;
   }
 
-  let refundId: string | undefined;
-  if (razorpayClient && order.paymentId && !order.paymentId.startsWith("pay_test_") && !order.paymentId.startsWith("cash_")) {
-    try {
-      const refund = await razorpayClient.payments.refund(order.paymentId, { amount: Math.round(order.totalAmount * 100) });
-      refundId = refund.id;
-    } catch (refundError) {
-      console.error("Razorpay refund failed", refundError);
-    }
-  }
+  const refundId = await issueRefundIfNeeded(order);
+  restockOrder(order);
 
   const cancelled: Order = { ...order, status: "CANCELLED" };
   orders.set(cancelled.id, cancelled);
@@ -1324,6 +1403,10 @@ app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => 
     return;
   }
 
+  if (status === "CANCELLED" && order.status !== "CANCELLED") {
+    await issueRefundIfNeeded(order);
+    restockOrder(order);
+  }
   const updated: Order = { ...order, status, readyAt: status === "READY" ? new Date().toISOString() : order.readyAt };
   orders.set(updated.id, updated);
   const notification = status === "READY" ? await queueReadyNotification(updated) : undefined;
@@ -1334,7 +1417,7 @@ app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => 
 }));
 
 app.get("/vendor/orders", requireVendor, asyncHandler(async (req, res) => {
-  if (expireStalePendingOrders()) await persistState();
+  await runOrderMaintenance();
   const vendor = getAuthedVendor(req);
   res.json({ orders: vendor ? vendorOrders(vendor.id) : [] });
 }));
@@ -1459,7 +1542,7 @@ app.get("/vendor/qr.png", requireVendor, asyncHandler(async (req, res) => {
 }));
 
 app.get("/vendor/dashboard", requireVendor, asyncHandler(async (req, res) => {
-  if (expireStalePendingOrders()) await persistState();
+  await runOrderMaintenance();
   const vendor = getAuthedVendor(req);
   const allOrders = vendor ? vendorOrders(vendor.id) : [];
   const revenue = allOrders.filter((order) => order.status === "COLLECTED").reduce((sum, order) => sum + order.totalAmount, 0);
@@ -1545,6 +1628,9 @@ export { app };
 
 if (process.env.NODE_ENV !== "test") {
   await initialize();
+  setInterval(() => {
+    runOrderMaintenance().catch((maintenanceError) => console.error("Order maintenance failed", maintenanceError));
+  }, 60 * 1000);
   server.listen(port, () => {
     console.log(`LocalServe API running on http://localhost:${port}`);
     console.log(`Seed storefront: ${publicAppUrl}/v/ravi-canteen`);

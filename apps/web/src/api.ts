@@ -1,4 +1,4 @@
-import type { Address, Customer, MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, MenuItem, Order, OrderStatus, PublicVendor, Vendor } from "@localserve/shared-types";
 
 export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
@@ -60,7 +60,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getStorefront(slug: string) {
   return request<{
-    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string };
+    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[] };
     menuItems: MenuItem[]
   }>(`/v/${slug}`);
 }
@@ -138,6 +138,8 @@ export function updateVendorProfile(payload: {
   deliveryEnabled?: boolean;
   deliveryFeeFlat?: number;
   bannerUrl?: string;
+  operatingHours?: DayHours[];
+  acceptWindowMinutes?: number;
 }) {
   return request<{ vendor: Vendor }>("/vendor/profile", {
     method: "PATCH",

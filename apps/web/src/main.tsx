@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import type { Address, Customer, MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
+import type { Address, Customer, DayHours, MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
 import {
   API_URL,
   type ShopSummary,
@@ -57,6 +57,12 @@ const SHOP_CATEGORIES = [
   "Electronics",
   "Other"
 ];
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function defaultOperatingHours(): DayHours[] {
+  return Array.from({ length: 7 }, () => ({ closed: false, open: "09:00", close: "21:00" }));
+}
 
 declare global {
   interface Window {
@@ -738,25 +744,30 @@ function CustomerStorefront() {
               <span>{menuItems.length} available</span>
             </div>
             <div className="menu-grid">
-              {menuItems.map((item) => (
-                <article className="menu-card" key={item.id}>
-                  <img src={item.photoUrl} alt="" />
-                  <div className="menu-card-body">
-                    <div>
-                      <p className="category">{item.category}</p>
-                      <h3>{item.name}</h3>
-                      <p>{item.description}</p>
+              {menuItems.map((item) => {
+                const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
+                const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
+                return (
+                  <article className="menu-card" key={item.id}>
+                    <img src={item.photoUrl} alt="" />
+                    <div className="menu-card-body">
+                      <div>
+                        <p className="category">{item.category}</p>
+                        <h3>{item.name}</h3>
+                        <p>{item.description}</p>
+                        {lowStock ? <span className="low-stock-badge">Only {item.stockQuantity} left</span> : null}
+                      </div>
+                      <div className="menu-action">
+                        <strong>₹{item.price}</strong>
+                        <QuantityControl
+                          value={quantities[item.id] ?? 0}
+                          onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
+                        />
+                      </div>
                     </div>
-                    <div className="menu-action">
-                      <strong>₹{item.price}</strong>
-                      <QuantityControl
-                        value={quantities[item.id] ?? 0}
-                        onChange={(quantity) => setQuantity(item.id, quantity)}
-                      />
-                    </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </section>
 
@@ -1046,7 +1057,9 @@ function VendorConsole() {
     category: "Food & Snacks",
     isOpen: true,
     deliveryEnabled: false,
-    deliveryFeeFlat: "0"
+    deliveryFeeFlat: "0",
+    operatingHours: defaultOperatingHours(),
+    acceptWindowMinutes: "15"
   });
   const [menuDraft, setMenuDraft] = React.useState({
     id: "",
@@ -1055,7 +1068,8 @@ function VendorConsole() {
     price: "50",
     photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80",
     category: "Snacks",
-    isAvailable: true
+    isAvailable: true,
+    stockQuantity: ""
   });
   const [menuPhotoFile, setMenuPhotoFile] = React.useState<File | null>(null);
   const [issuedToken, setIssuedToken] = React.useState("");
@@ -1100,7 +1114,9 @@ function VendorConsole() {
             category: data.vendor.category ?? "Food & Snacks",
             isOpen: data.vendor.isOpen ?? true,
             deliveryEnabled: data.vendor.deliveryEnabled ?? false,
-            deliveryFeeFlat: String(data.vendor.deliveryFeeFlat ?? 0)
+            deliveryFeeFlat: String(data.vendor.deliveryFeeFlat ?? 0),
+            operatingHours: data.vendor.operatingHours ?? defaultOperatingHours(),
+            acceptWindowMinutes: String(data.vendor.acceptWindowMinutes ?? 15)
           }));
           refresh();
           socket.emit("join_vendor", { token });
@@ -1147,7 +1163,8 @@ function VendorConsole() {
       price: Number(menuDraft.price),
       photoUrl: menuDraft.photoUrl,
       category: menuDraft.category,
-      isAvailable: menuDraft.isAvailable
+      isAvailable: menuDraft.isAvailable,
+      stockQuantity: menuDraft.stockQuantity.trim() === "" ? undefined : Number(menuDraft.stockQuantity)
     };
     try {
       if (menuDraft.id) {
@@ -1159,7 +1176,7 @@ function VendorConsole() {
         if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
         setMenu((current) => [response.menuItem, ...current]);
       }
-      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true });
+      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true, stockQuantity: "" });
       setMenuPhotoFile(null);
     } catch (menuError) {
       setError(messageFromError(menuError));
@@ -1185,7 +1202,8 @@ function VendorConsole() {
       price: String(item.price),
       photoUrl: item.photoUrl,
       category: item.category,
-      isAvailable: item.isAvailable
+      isAvailable: item.isAvailable,
+      stockQuantity: typeof item.stockQuantity === "number" ? String(item.stockQuantity) : ""
     });
   }
 
@@ -1232,7 +1250,9 @@ function VendorConsole() {
         category: response.vendor.category ?? "Food & Snacks",
         isOpen: response.vendor.isOpen ?? true,
         deliveryEnabled: response.vendor.deliveryEnabled ?? false,
-        deliveryFeeFlat: String(response.vendor.deliveryFeeFlat ?? 0)
+        deliveryFeeFlat: String(response.vendor.deliveryFeeFlat ?? 0),
+        operatingHours: response.vendor.operatingHours ?? defaultOperatingHours(),
+        acceptWindowMinutes: String(response.vendor.acceptWindowMinutes ?? 15)
       }));
       socket.emit("join_vendor", { token: response.token });
       refresh();
@@ -1267,7 +1287,9 @@ function VendorConsole() {
         category: profileDraft.category,
         isOpen: profileDraft.isOpen,
         deliveryEnabled: profileDraft.deliveryEnabled,
-        deliveryFeeFlat: Number(profileDraft.deliveryFeeFlat)
+        deliveryFeeFlat: Number(profileDraft.deliveryFeeFlat),
+        operatingHours: profileDraft.operatingHours,
+        acceptWindowMinutes: Number(profileDraft.acceptWindowMinutes)
       });
       setVendor(response.vendor);
     } catch (profileError) {
@@ -1513,6 +1535,61 @@ function VendorConsole() {
                   <input type="number" min="0" value={profileDraft.deliveryFeeFlat} onChange={(e) => setProfileDraft((d) => ({ ...d, deliveryFeeFlat: e.target.value }))} />
                 </label>
               ) : null}
+
+              <div className="hours-editor">
+                <p className="hours-title">Weekly operating hours</p>
+                <p className="muted small">Customers can only order while the shop is within these hours. The "Shop is open" toggle above can force-close it anytime.</p>
+                {profileDraft.operatingHours.map((day, index) => (
+                  <div className="hours-row" key={DAY_NAMES[index]}>
+                    <span className="hours-day">{DAY_NAMES[index]}</span>
+                    <label className="checkbox-row hours-closed">
+                      <input
+                        type="checkbox"
+                        checked={day.closed}
+                        onChange={(e) => setProfileDraft((d) => ({
+                          ...d,
+                          operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, closed: e.target.checked } : h)
+                        }))}
+                      />
+                      Closed
+                    </label>
+                    {!day.closed ? (
+                      <div className="hours-times">
+                        <input
+                          type="time"
+                          value={day.open}
+                          onChange={(e) => setProfileDraft((d) => ({
+                            ...d,
+                            operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, open: e.target.value } : h)
+                          }))}
+                        />
+                        <span>to</span>
+                        <input
+                          type="time"
+                          value={day.close}
+                          onChange={(e) => setProfileDraft((d) => ({
+                            ...d,
+                            operatingHours: d.operatingHours.map((h, i) => i === index ? { ...h, close: e.target.value } : h)
+                          }))}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+
+              <label>
+                Order acceptance window (minutes)
+                <input
+                  type="number"
+                  min="1"
+                  max="240"
+                  value={profileDraft.acceptWindowMinutes}
+                  onChange={(e) => setProfileDraft((d) => ({ ...d, acceptWindowMinutes: e.target.value }))}
+                />
+              </label>
+              <p className="muted small">Confirmed orders not started within this window are auto-cancelled (online payments are refunded).</p>
+
               <button>Update profile</button>
             </form>
           </section>
@@ -1562,27 +1639,50 @@ function VendorConsole() {
                 Category
                 <input value={menuDraft.category} onChange={(event) => setMenuDraft((draft) => ({ ...draft, category: event.target.value }))} />
               </label>
+              <label>
+                Stock quantity
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Leave blank for unlimited"
+                  value={menuDraft.stockQuantity}
+                  onChange={(event) => setMenuDraft((draft) => ({ ...draft, stockQuantity: event.target.value }))}
+                />
+              </label>
               <label className="checkbox-row">
                 <input type="checkbox" checked={menuDraft.isAvailable} onChange={(event) => setMenuDraft((draft) => ({ ...draft, isAvailable: event.target.checked }))} />
                 Available
               </label>
               <button disabled={!isLoggedIn}>{menuDraft.id ? "Update item" : "Add item"}</button>
             </form>
-            {menu.map((item) => (
-              <div className="menu-toggle" key={item.id}>
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>₹{item.price}</span>
+            {menu.map((item) => {
+              const tracked = typeof item.stockQuantity === "number";
+              const outOfStock = tracked && item.stockQuantity === 0;
+              return (
+                <div className="menu-toggle" key={item.id}>
+                  <div>
+                    <strong>{item.name}</strong>
+                    <span>
+                      ₹{item.price}
+                      {tracked ? (
+                        <span className={outOfStock ? "stock-label out" : "stock-label"}>
+                          {" · "}{outOfStock ? "Out of stock" : `${item.stockQuantity} in stock`}
+                        </span>
+                      ) : (
+                        <span className="stock-label">{" · "}Unlimited</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="button-row">
+                    <button className={item.isAvailable ? "toggle on" : "toggle"} onClick={() => toggleItem(item)}>
+                      {item.isAvailable ? "Available" : "Hidden"}
+                    </button>
+                    <button className="toggle" onClick={() => editItem(item)}>Edit</button>
+                    <button className="danger-button" onClick={() => removeItem(item)}>Delete</button>
+                  </div>
                 </div>
-                <div className="button-row">
-                  <button className={item.isAvailable ? "toggle on" : "toggle"} onClick={() => toggleItem(item)}>
-                    {item.isAvailable ? "Available" : "Hidden"}
-                  </button>
-                  <button className="toggle" onClick={() => editItem(item)}>Edit</button>
-                  <button className="danger-button" onClick={() => removeItem(item)}>Delete</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </section>
         </main>
       )}
