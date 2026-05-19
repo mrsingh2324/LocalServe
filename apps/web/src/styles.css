@@ -1090,6 +1090,13 @@ textarea:focus {
   border-radius: var(--r-sm);
 }
 
+.form-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+  margin-left: 4px;
+}
+
 /* ── Demo Vendors ─────────────────────────────────────────────────────────── */
 
 .demo-vendors {
@@ -1494,6 +1501,30 @@ textarea:focus {
   font-weight: 800;
   color: var(--text);
   margin: 0 0 16px;
+}
+
+/* ── Locality Section ─────────────────────────────────────────────────────── */
+
+.locality-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 32px;
+}
+
+.locality-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 0;
+}
+
+.locality-pin {
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* ── Shops Grid ───────────────────────────────────────────────────────────── */

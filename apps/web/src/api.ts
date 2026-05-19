@@ -124,6 +124,20 @@ export function requestVendorEmailOtp(email: string) {
   });
 }
 
+export function requestVendorEmailRegisterOtp(email: string) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/vendor/email/register/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function registerVendorByEmail(payload: { name: string; email: string; otpCode: string; locationTag: string; upiId: string; phone?: string }) {
+  return request<{ vendor: Vendor; token: string }>("/vendor/register/email", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function verifyVendorEmailOtp(payload: { email: string; otpCode: string }) {
   return request<{ vendor: Vendor; token: string }>("/auth/vendor/email/otp/verify", {
     method: "POST",

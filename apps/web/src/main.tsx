@@ -37,9 +37,11 @@ import {
   getVendorOrders,
   getVendorQr,
   registerVendor,
+  registerVendorByEmail,
   requestCustomerEmailOtp,
   requestCustomerOtp,
   requestVendorEmailOtp,
+  requestVendorEmailRegisterOtp,
   requestVendorOtp,
   setStoredAdminToken,
   setStoredCustomerToken,
@@ -378,6 +380,96 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
   );
 }
 
+// ── Shop Card + Grid ──────────────────────────────────────────────────────────
+
+function ShopCard({ shop }: { shop: ShopSummary }) {
+  return (
+    <Link to={`/v/${shop.slug}`} className="shop-card">
+      {shop.bannerUrl ? (
+        <img src={shop.bannerUrl} alt="" className="shop-banner" />
+      ) : (
+        <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
+      )}
+      <div className="shop-card-body">
+        <div className="shop-card-top">
+          <span className="shop-category">{shop.category}</span>
+          <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
+            {shop.isOpen ? "● Open" : "● Closed"}
+          </span>
+        </div>
+        <h3>
+          {shop.name}
+          {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
+        </h3>
+        <p className="shop-location">{shop.locationTag}</p>
+        {(shop.orderCount > 0 || shop.createdAt) ? (
+          <div className="shop-trust-row">
+            {shop.orderCount > 0 ? (
+              <span className="trust-pill trust-pill-orders">
+                🛒 {formatOrderCount(shop.orderCount)} orders
+              </span>
+            ) : null}
+            {shop.orderCount > 0 && shop.createdAt ? <span className="trust-dot" /> : null}
+            {shop.createdAt ? (
+              <span className="trust-pill trust-pill-since">Since {sinceYear(shop.createdAt)}</span>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="shop-meta" style={{ marginTop: 8 }}>
+          {shop.deliveryEnabled ? (
+            <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
+          ) : (
+            <span className="pickup-badge">Pickup only</span>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function ShopGrid({ shops, searchActive, activeCategory }: { shops: ShopSummary[]; searchActive: boolean; activeCategory: string }) {
+  const grouped = React.useMemo(() => {
+    if (searchActive) return null;
+    const map = new Map<string, ShopSummary[]>();
+    for (const shop of shops) {
+      const key = shop.locationTag || "Other";
+      const existing = map.get(key);
+      if (existing) existing.push(shop);
+      else map.set(key, [shop]);
+    }
+    return map.size > 1 ? map : null;
+  }, [shops, searchActive]);
+
+  if (grouped) {
+    return (
+      <>
+        {[...grouped.entries()].map(([area, areaShops]) => (
+          <div key={area} className="locality-section">
+            <h2 className="locality-heading">
+              <span className="locality-pin">📍</span>
+              {area}
+            </h2>
+            <div className="shops-grid">
+              {areaShops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="shops-section-title">
+        {searchActive ? `Results` : (activeCategory === "All" ? "All Shops" : activeCategory)} · {shops.length} near you
+      </p>
+      <div className="shops-grid">
+        {shops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+      </div>
+    </>
+  );
+}
+
 // ── Home Page ─────────────────────────────────────────────────────────────────
 
 function HomePage() {
@@ -488,55 +580,7 @@ function HomePage() {
             <p className="empty-sub">Try a different search term or category</p>
           </div>
         ) : (
-          <>
-            <p className="shops-section-title">{activeCategory === "All" ? "All Shops" : activeCategory} · {shops.length} near you</p>
-            <div className="shops-grid">
-              {shops.map((shop) => (
-                <Link key={shop.id} to={`/v/${shop.slug}`} className="shop-card">
-                  {shop.bannerUrl ? (
-                    <img src={shop.bannerUrl} alt="" className="shop-banner" />
-                  ) : (
-                    <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
-                  )}
-                  <div className="shop-card-body">
-                    <div className="shop-card-top">
-                      <span className="shop-category">{shop.category}</span>
-                      <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
-                        {shop.isOpen ? "● Open" : "● Closed"}
-                      </span>
-                    </div>
-                    <h3>
-                      {shop.name}
-                      {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
-                    </h3>
-                    <p className="shop-location">{shop.locationTag}</p>
-                    {(shop.orderCount > 0 || shop.createdAt) ? (
-                      <div className="shop-trust-row">
-                        {shop.orderCount > 0 ? (
-                          <span className="trust-pill trust-pill-orders">
-                            🛒 {formatOrderCount(shop.orderCount)} orders
-                          </span>
-                        ) : null}
-                        {shop.orderCount > 0 && shop.createdAt ? <span className="trust-dot" /> : null}
-                        {shop.createdAt ? (
-                          <span className="trust-pill trust-pill-since">
-                            Since {sinceYear(shop.createdAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <div className="shop-meta" style={{ marginTop: 8 }}>
-                      {shop.deliveryEnabled ? (
-                        <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
-                      ) : (
-                        <span className="pickup-badge">Pickup only</span>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </>
+          <ShopGrid shops={shops} searchActive={search.trim().length > 0} activeCategory={activeCategory} />
         )}
       </main>
     </Shell>
@@ -1382,6 +1426,7 @@ function VendorConsole() {
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
   const [loginDraft, setLoginDraft] = React.useState({ phone: "", email: "", otpCode: "" });
   const [loginMethod, setLoginMethod] = React.useState<"phone" | "email">("phone");
+  const [signupMethod, setSignupMethod] = React.useState<"phone" | "email">("email");
   const [profileDraft, setProfileDraft] = React.useState({
     name: "",
     phone: "",
@@ -1564,9 +1609,12 @@ function VendorConsole() {
     setError("");
     setAuthMessage("");
     try {
-      const response = await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
+      const response = signupMethod === "email"
+        ? await requestVendorEmailRegisterOtp(profileDraft.email)
+        : await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
       setRegisterOtpSent(true);
-      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `OTP sent to ${profileDraft.phone}.`);
+      const target = signupMethod === "email" ? profileDraft.email : profileDraft.phone;
+      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `Code sent to ${target}.`);
     } catch (otpError) {
       setRegisterOtpSent(false);
       setError(messageFromError(otpError));
@@ -1608,7 +1656,16 @@ function VendorConsole() {
     event.preventDefault();
     setError("");
     try {
-      const response = await registerVendor(profileDraft);
+      const response = signupMethod === "email"
+        ? await registerVendorByEmail({
+            name: profileDraft.name,
+            email: profileDraft.email,
+            otpCode: profileDraft.otpCode,
+            locationTag: profileDraft.locationTag,
+            upiId: profileDraft.upiId,
+            phone: profileDraft.phone || undefined
+          })
+        : await registerVendor(profileDraft);
       setStoredVendorToken(response.token);
       setVendor(response.vendor);
       setIssuedToken(response.token);
@@ -1785,44 +1842,104 @@ function VendorConsole() {
                 <button className="text-button" onClick={() => setAuthMode("entry")}>Back</button>
               </div>
               <ErrorBanner message={error} onDismiss={() => setError("")} />
+              <div className="auth-method-toggle">
+                <button
+                  type="button"
+                  className={signupMethod === "email" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setSignupMethod("email"); setRegisterOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
+                  Email
+                </button>
+                <button
+                  type="button"
+                  className={signupMethod === "phone" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setSignupMethod("phone"); setRegisterOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
+                  Mobile number
+                </button>
+              </div>
               <form className="onboarding-form" onSubmit={registerShop}>
                 <label>
                   Shop name
                   <input required value={profileDraft.name} onChange={(event) => setProfileDraft((draft) => ({ ...draft, name: event.target.value }))} />
                 </label>
-                <label>
-                  Mobile number
-                  <input required value={profileDraft.phone} onChange={(event) => {
-                    setProfileDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
-                    setRegisterOtpSent(false);
-                    setAuthMessage("");
-                  }} />
-                </label>
-                <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.phone}>Send OTP</button>
-                {registerOtpSent ? (
-                  <label>
-                    OTP
-                    <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
-                  </label>
-                ) : null}
+
+                {signupMethod === "email" ? (
+                  <>
+                    <label>
+                      Email address
+                      <input required type="email" value={profileDraft.email} onChange={(event) => {
+                        setProfileDraft((draft) => ({ ...draft, email: event.target.value, otpCode: "" }));
+                        setRegisterOtpSent(false);
+                        setAuthMessage("");
+                      }} />
+                    </label>
+                    <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.email}>
+                      Send verification code
+                    </button>
+                    {registerOtpSent ? (
+                      <label>
+                        Verification code
+                        <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} placeholder="Check your inbox" />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <label>
+                      Mobile number
+                      <input required value={profileDraft.phone} onChange={(event) => {
+                        setProfileDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
+                        setRegisterOtpSent(false);
+                        setAuthMessage("");
+                      }} />
+                    </label>
+                    <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.phone}>
+                      Send OTP
+                    </button>
+                    {registerOtpSent ? (
+                      <label>
+                        OTP
+                        <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
+                      </label>
+                    ) : null}
+                  </>
+                )}
+
                 <label>
                   Location / area
                   <input required value={profileDraft.locationTag} onChange={(event) => setProfileDraft((draft) => ({ ...draft, locationTag: event.target.value }))} />
                 </label>
-                <label>
-                  Email (optional — enables email login)
-                  <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
-                </label>
+
+                {signupMethod === "email" ? (
+                  <label>
+                    Mobile number <span className="form-hint">(optional — for SMS order alerts)</span>
+                    <input value={profileDraft.phone} onChange={(event) => setProfileDraft((draft) => ({ ...draft, phone: event.target.value }))} />
+                  </label>
+                ) : (
+                  <label>
+                    Email <span className="form-hint">(optional — enables email login)</span>
+                    <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
+                  </label>
+                )}
+
                 <label>
                   UPI ID
                   <input required value={profileDraft.upiId} onChange={(event) => setProfileDraft((draft) => ({ ...draft, upiId: event.target.value }))} />
                 </label>
-                <label>
-                  Password
-                  <input required minLength={6} type="password" value={profileDraft.password} onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))} />
-                </label>
+                {signupMethod === "phone" ? (
+                  <label>
+                    Password
+                    <input required minLength={6} type="password" value={profileDraft.password} onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))} />
+                  </label>
+                ) : null}
                 {authMessage ? <p className="token-note">{authMessage}</p> : null}
-                <button disabled={!registerOtpSent || !profileDraft.otpCode || !profileDraft.name || !profileDraft.locationTag || !profileDraft.upiId || profileDraft.password.length < 6}>Create shop</button>
+                <button disabled={
+                  !registerOtpSent || !profileDraft.otpCode || !profileDraft.name || !profileDraft.locationTag || !profileDraft.upiId ||
+                  (signupMethod === "phone" && profileDraft.password.length < 6)
+                }>
+                  Create shop
+                </button>
               </form>
             </section>
           ) : null}
