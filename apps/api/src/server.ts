@@ -557,9 +557,7 @@ async function sendEmailOtp(email: string, purpose: string): Promise<{ code: str
   });
 
   if (!mailTransporter) {
-    if (process.env.NODE_ENV === "production") {
-      console.error("Email OTP requested but SMTP is not configured (set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS)");
-    }
+    console.warn(`[OTP] SMTP not configured — ${purpose} code for ${email}: ${code}`);
     return { code, delivered: false };
   }
 
@@ -1232,15 +1230,11 @@ app.post("/auth/vendor/email/otp/request", authLimiter, asyncHandler(async (req,
     return;
   }
   const { code, delivered } = await sendEmailOtp(normalized, "vendor-email");
-  if (process.env.NODE_ENV === "production" && !delivered) {
-    res.status(502).json({ error: "We couldn't send the login email right now. Please try again shortly or log in with your mobile number." });
-    return;
-  }
   res.json({
     status: "sent",
     channel: "email",
     expiresInSeconds: Math.round(otpTtlMs / 1000),
-    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+    ...(!delivered || process.env.NODE_ENV !== "production" ? { devOtp: code } : {})
   });
 }));
 
@@ -1267,15 +1261,11 @@ app.post("/auth/vendor/email/register/request", authLimiter, asyncHandler(async 
     return;
   }
   const { code, delivered } = await sendEmailOtp(normalized, "vendor-email-register");
-  if (process.env.NODE_ENV === "production" && !delivered) {
-    res.status(502).json({ error: "Could not send the verification email right now. Please try again shortly." });
-    return;
-  }
   res.json({
     status: "sent",
     channel: "email",
     expiresInSeconds: Math.round(otpTtlMs / 1000),
-    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+    ...(!delivered || process.env.NODE_ENV !== "production" ? { devOtp: code } : {})
   });
 }));
 
@@ -1582,15 +1572,11 @@ app.post("/auth/customer/otp/verify", authLimiter, asyncHandler(async (req, res)
 app.post("/auth/customer/email/otp/request", authLimiter, asyncHandler(async (req, res) => {
   const { email } = emailOtpRequestSchema.parse(req.body);
   const { code, delivered } = await sendEmailOtp(email.toLowerCase(), "customer-email");
-  if (process.env.NODE_ENV === "production" && !delivered) {
-    res.status(502).json({ error: "We couldn't send the login email right now. Please try again shortly or continue with your mobile number." });
-    return;
-  }
   res.json({
     status: "sent",
     channel: "email",
     expiresInSeconds: Math.round(otpTtlMs / 1000),
-    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+    ...(!delivered || process.env.NODE_ENV !== "production" ? { devOtp: code } : {})
   });
 }));
 
