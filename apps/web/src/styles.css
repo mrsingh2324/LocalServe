@@ -2099,6 +2099,63 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* ── Menu Category Tabs ───────────────────────────────────────────────────── */
+
+.menu-cat-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 0 12px;
+  margin-bottom: 4px;
+  scroll-snap-type: x mandatory;
+}
+
+.menu-cat-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.menu-cat-tab {
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.menu-cat-tab:hover {
+  border-color: var(--c-purple);
+  color: var(--c-purple);
+}
+
+.menu-cat-tab.active {
+  background: var(--c-purple);
+  border-color: var(--c-purple);
+  color: #fff;
+}
+
+.menu-cat-section {
+  margin-bottom: 32px;
+}
+
+.menu-cat-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 12px;
+  padding-top: 8px;
+  scroll-margin-top: 64px;
+}
+
 /* ── Customer Profile Page ────────────────────────────────────────────────── */
 
 .panel-header {

@@ -1169,6 +1169,123 @@ function AddressBook() {
 
 // ── Customer Storefront ───────────────────────────────────────────────────────
 
+// ── Menu Section with category tabs ──────────────────────────────────────────
+
+function MenuSection({
+  menuItems,
+  quantities,
+  setQuantity,
+}: {
+  menuItems: MenuItem[];
+  quantities: Record<string, number>;
+  setQuantity: (id: string, qty: number) => void;
+}) {
+  const categories = React.useMemo(() => {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const item of menuItems) {
+      if (!seen.has(item.category)) { seen.add(item.category); order.push(item.category); }
+    }
+    return order;
+  }, [menuItems]);
+
+  const [activeTab, setActiveTab] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (categories.length > 0 && !activeTab) setActiveTab(categories[0]);
+  }, [categories, activeTab]);
+
+  const tabsRef = React.useRef<HTMLDivElement>(null);
+
+  function scrollTo(cat: string) {
+    setActiveTab(cat);
+    const el = document.getElementById(`menu-cat-${CSS.escape(cat)}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    // keep active tab visible in the strip
+    const btn = tabsRef.current?.querySelector<HTMLButtonElement>(`[data-cat="${CSS.escape(cat)}"]`);
+    btn?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }
+
+  // Update active tab on scroll (intersection observer)
+  React.useEffect(() => {
+    if (categories.length <= 1) return;
+    const observers: IntersectionObserver[] = [];
+    for (const cat of categories) {
+      const el = document.getElementById(`menu-cat-${CSS.escape(cat)}`);
+      if (!el) continue;
+      const obs = new IntersectionObserver(
+        ([entry]) => { if (entry.isIntersecting) setActiveTab(cat); },
+        { rootMargin: "-40% 0px -55% 0px", threshold: 0 }
+      );
+      obs.observe(el);
+      observers.push(obs);
+    }
+    return () => observers.forEach((o) => o.disconnect());
+  }, [categories]);
+
+  const grouped = React.useMemo(() => {
+    const map = new Map<string, MenuItem[]>();
+    for (const cat of categories) map.set(cat, []);
+    for (const item of menuItems) map.get(item.category)?.push(item);
+    return map;
+  }, [menuItems, categories]);
+
+  return (
+    <section>
+      <div className="section-head">
+        <h2>Menu</h2>
+        <span>{menuItems.length} available</span>
+      </div>
+
+      {categories.length > 1 && (
+        <div className="menu-cat-tabs" ref={tabsRef}>
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              data-cat={cat}
+              className={`menu-cat-tab${activeTab === cat ? " active" : ""}`}
+              onClick={() => scrollTo(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {[...grouped.entries()].map(([cat, items]) => (
+        <div key={cat} className="menu-cat-section">
+          <h3 id={`menu-cat-${CSS.escape(cat)}`} className="menu-cat-heading">{cat}</h3>
+          <div className="menu-grid">
+            {items.map((item) => {
+              const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
+              const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
+              return (
+                <article className={`menu-card${(quantities[item.id] ?? 0) > 0 ? " in-cart" : ""}`} key={item.id}>
+                  <img src={item.photoUrl} alt="" />
+                  <div className="menu-card-body">
+                    <div>
+                      <h3>{item.name}</h3>
+                      <p>{item.description}</p>
+                      {lowStock ? <span className="low-stock-badge">Only {item.stockQuantity} left</span> : null}
+                    </div>
+                    <div className="menu-action">
+                      <strong>₹{item.price}</strong>
+                      <QuantityControl
+                        value={quantities[item.id] ?? 0}
+                        onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
+                      />
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function CustomerStorefront() {
   const { slug } = useParams<{ slug: string }>();
   const { customer } = useCustomer();
@@ -1343,38 +1460,7 @@ function CustomerStorefront() {
         <OrderConfirmation order={placedOrder} vendorName={(vendor as { name?: string }).name ?? "Shop"} />
       ) : (
         <main className="customer-grid">
-          <section>
-            <div className="section-head">
-              <h2>Menu</h2>
-              <span>{menuItems.length} available</span>
-            </div>
-            <div className="menu-grid">
-              {menuItems.map((item) => {
-                const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
-                const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
-                return (
-                  <article className={`menu-card${(quantities[item.id] ?? 0) > 0 ? " in-cart" : ""}`} key={item.id}>
-                    <img src={item.photoUrl} alt="" />
-                    <div className="menu-card-body">
-                      <div>
-                        <p className="category">{item.category}</p>
-                        <h3>{item.name}</h3>
-                        <p>{item.description}</p>
-                        {lowStock ? <span className="low-stock-badge">Only {item.stockQuantity} left</span> : null}
-                      </div>
-                      <div className="menu-action">
-                        <strong>₹{item.price}</strong>
-                        <QuantityControl
-                          value={quantities[item.id] ?? 0}
-                          onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
-                        />
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
+          <MenuSection menuItems={menuItems} quantities={quantities} setQuantity={setQuantity} />
 
           <aside className="cart-panel">
             <h2>Your order</h2>
