@@ -95,6 +95,8 @@ export type ShopSummary = {
   storefrontUrl: string;
   bannerUrl?: string;
   verified: boolean;
+  orderCount: number;
+  createdAt: string;
 };
 
 export function getShops(params?: { category?: string; q?: string; deliveryOnly?: boolean }) {
