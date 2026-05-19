@@ -284,6 +284,38 @@ function useCustomer() {
   return React.useContext(CustomerContext);
 }
 
+// ── Empty / Loading States ────────────────────────────────────────────────────
+
+function EmptyState({
+  icon,
+  title,
+  subtitle,
+  action,
+}: {
+  icon: string;
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="empty">
+      <div className="empty-icon-circle">{icon}</div>
+      <p className="empty-title">{title}</p>
+      {subtitle ? <p className="empty-sub">{subtitle}</p> : null}
+      {action ? <div className="empty-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function PageLoader({ label }: { label?: string }) {
+  return (
+    <div className="page-loader">
+      <div className="spinner" aria-hidden="true" />
+      <span>{label ?? "Loading…"}</span>
+    </div>
+  );
+}
+
 // ── App Shell ─────────────────────────────────────────────────────────────────
 
 function App() {
@@ -306,19 +338,28 @@ function App() {
   return (
     <CustomerContext.Provider value={{ customer, setCustomer, logout }}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<CustomerLoginPage />} />
-          <Route path="/my-orders" element={<CustomerOrdersPage />} />
-          <Route path="/account" element={<CustomerProfilePage />} />
-          <Route path="/v/:slug" element={<CustomerStorefront />} />
-          <Route path="/order/:orderId" element={<OrderStatusPage />} />
-          <Route path="/vendor" element={<VendorConsole />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <RoutedApp />
       </BrowserRouter>
     </CustomerContext.Provider>
+  );
+}
+
+function RoutedApp() {
+  const location = useLocation();
+  return (
+    <div className="route-fade" key={location.pathname}>
+      <Routes location={location}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<CustomerLoginPage />} />
+        <Route path="/my-orders" element={<CustomerOrdersPage />} />
+        <Route path="/account" element={<CustomerProfilePage />} />
+        <Route path="/v/:slug" element={<CustomerStorefront />} />
+        <Route path="/order/:orderId" element={<OrderStatusPage />} />
+        <Route path="/vendor" element={<VendorConsole />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
   );
 }
 
@@ -328,6 +369,14 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
   const { customer, logout } = useCustomer();
   const location = useLocation();
   const p = location.pathname;
+  const [scrolled, setScrolled] = React.useState(false);
+
+  React.useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function navClass(path: string) {
     return `bottom-nav-item${p === path ? " active" : ""}`;
@@ -335,7 +384,7 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
 
   return (
     <div>
-      <header className="topbar">
+      <header className={`topbar${scrolled ? " scrolled" : ""}`}>
         <Link to="/" className="brand">QuickOrder</Link>
         <nav>
           {customer ? (
@@ -724,11 +773,11 @@ function HomePage() {
             {Array.from({ length: 6 }).map((_, i) => <ShopCardSkeleton key={i} />)}
           </div>
         ) : shops.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon">🏪</div>
-            <p className="empty-title">No shops found</p>
-            <p className="empty-sub">Try a different search term or category</p>
-          </div>
+          <EmptyState
+            icon="🔍"
+            title="No shops found"
+            subtitle="Try a different search term or category to discover shops near you."
+          />
         ) : (
           <ShopGrid shops={shops} searchActive={search.trim().length > 0} activeCategory={activeCategory} />
         )}
@@ -969,12 +1018,14 @@ function CustomerOrdersPage() {
       <main className="orders-page">
         <ErrorBanner message={error} onDismiss={() => setError("")} />
         {loading ? (
-          <div className="empty">Loading your orders...</div>
+          <PageLoader label="Loading your orders…" />
         ) : orders.length === 0 ? (
-          <div className="empty">
-            <p>You haven't placed any orders yet.</p>
-            <Link to="/" className="primary-link">Browse shops</Link>
-          </div>
+          <EmptyState
+            icon="🧾"
+            title="No orders yet"
+            subtitle="When you place an order it'll show up here so you can track and reorder it."
+            action={<Link to="/">Browse shops</Link>}
+          />
         ) : (
           <div className="order-history">
             {orders.map((order) => (
@@ -1354,7 +1405,14 @@ function CustomerStorefront() {
     payment: { keyId?: string; orderId?: string; amount?: number; currency?: string };
   } | null>(null);
   const [error, setError] = React.useState("");
+  const [cartSheetOpen, setCartSheetOpen] = React.useState(false);
   const { quantities, setQuantity, clear } = useCartStore();
+
+  React.useEffect(() => {
+    if (!cartSheetOpen) return;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, [cartSheetOpen]);
 
   React.useEffect(() => {
     if (!slug) return;
@@ -1477,7 +1535,16 @@ function CustomerStorefront() {
     </Shell>
   );
 
-  if (!vendor) return <Shell hideVendorNav><div className="empty"><div className="empty-icon">⚠️</div><p className="empty-title">{error || "Shop not found"}</p></div></Shell>;
+  if (!vendor) return (
+    <Shell hideVendorNav>
+      <EmptyState
+        icon="🏪"
+        title={error || "Shop not found"}
+        subtitle="This shop may have moved or the link is incorrect."
+        action={<Link to="/">Go home</Link>}
+      />
+    </Shell>
+  );
 
   return (
     <Shell hideVendorNav>
@@ -1519,7 +1586,18 @@ function CustomerStorefront() {
         <main className="customer-grid">
           <MenuSection menuItems={menuItems} quantities={quantities} setQuantity={setQuantity} />
 
-          <aside className="cart-panel">
+          <aside className={`cart-panel${cartSheetOpen ? " open" : ""}`}>
+            <div className="cart-sheet-header">
+              <span className="cart-sheet-grip" aria-hidden="true" />
+              <button
+                type="button"
+                className="cart-sheet-close"
+                aria-label="Close order summary"
+                onClick={() => setCartSheetOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
             <h2>Your order</h2>
             <ErrorBanner message={error} onDismiss={() => setError("")} />
             {pendingPayment ? (
@@ -1666,7 +1744,10 @@ function CustomerStorefront() {
           </aside>
         </main>
       )}
-      {!placedOrder && cartLines.length > 0 ? (
+      {!placedOrder && cartSheetOpen ? (
+        <div className="cart-sheet-backdrop" onClick={() => setCartSheetOpen(false)} />
+      ) : null}
+      {!placedOrder && cartLines.length > 0 && !cartSheetOpen ? (
         <div className="cart-bar">
           <div className="cart-bar-info">
             <span className="cart-bar-count">{cartLines.reduce((s, l) => s + l.quantity, 0)} item{cartLines.reduce((s, l) => s + l.quantity, 0) !== 1 ? "s" : ""}</span>
@@ -1674,7 +1755,7 @@ function CustomerStorefront() {
           </div>
           <button
             className="cart-bar-btn"
-            onClick={() => document.querySelector(".cart-panel")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            onClick={() => setCartSheetOpen(true)}
           >
             View order →
           </button>
@@ -1797,7 +1878,7 @@ function OrderStatusPage() {
     }
   }
 
-  if (!order || !vendor) return <Shell><div className="empty">Loading order...</div></Shell>;
+  if (!order || !vendor) return <Shell><PageLoader label="Loading order…" /></Shell>;
 
   const isOwner = customer && order.customerId === customer.id;
   const canCancel = isOwner && ["PENDING", "CONFIRMED"].includes(order.status);
@@ -2529,7 +2610,13 @@ function VendorConsole() {
               <h2>Live queue</h2>
               <span>{orders.length} orders</span>
             </div>
-            {orders.length === 0 ? <p className="muted">New paid orders will appear here instantly.</p> : null}
+            {orders.length === 0 ? (
+              <EmptyState
+                icon="📭"
+                title="No orders yet"
+                subtitle="New paid orders land here instantly — keep this page open during business hours."
+              />
+            ) : null}
             {orders.map((order) => {
               const windowMinutes = vendor?.acceptWindowMinutes ?? 15;
               const showCountdown = order.status === "CONFIRMED";
