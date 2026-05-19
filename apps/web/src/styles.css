@@ -1332,6 +1332,7 @@ textarea:focus {
 
 .search-bar {
   display: flex;
+  align-items: flex-start;
   gap: 10px;
   max-width: 560px;
 }
@@ -1339,6 +1340,7 @@ textarea:focus {
 .search-bar input {
   flex: 1;
   min-width: 0;
+  width: 100%;
   background: rgba(255, 255, 255, 0.97);
   border: none;
   border-radius: var(--r-full);
@@ -1365,6 +1367,99 @@ textarea:focus {
 
 .search-bar button:hover:not(:disabled) {
   background: var(--c-purple-bg);
+}
+
+/* ── Search Autocomplete ──────────────────────────────────────────────────── */
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 200;
+  animation: slide-up-in 0.14s ease both;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.1s;
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  border-radius: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-item:hover,
+.suggestion-item:focus,
+.suggestion-item[aria-selected="true"] {
+  background: var(--c-purple-bg);
+  outline: none;
+}
+
+.suggestion-icon {
+  font-size: 18px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+
+.suggestion-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.suggestion-name {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggestion-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggestion-item mark {
+  background: var(--c-purple-pale);
+  color: var(--c-purple-dark);
+  border-radius: 2px;
+  font-style: normal;
+}
+
+.search-bar input {
+  width: 100%;
 }
 
 /* ── Value Strip ──────────────────────────────────────────────────────────── */

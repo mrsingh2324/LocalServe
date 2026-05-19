@@ -472,36 +472,140 @@ function ShopGrid({ shops, searchActive, activeCategory }: { shops: ShopSummary[
 
 // ── Home Page ─────────────────────────────────────────────────────────────────
 
+function highlight(text: string, query: string): React.ReactNode {
+  if (!query) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark>{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
 function HomePage() {
+  const navigate = useNavigate();
+  const [allShops, setAllShops] = React.useState<ShopSummary[]>([]);
   const [shops, setShops] = React.useState<ShopSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [activeCategory, setActiveCategory] = React.useState("All");
   const [deliveryOnly, setDeliveryOnly] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const [activeIdx, setActiveIdx] = React.useState(-1);
+  const searchWrapRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Load all shops once for autocomplete
   React.useEffect(() => {
-    setLoading(true);
-    const params: { category?: string; q?: string; deliveryOnly?: boolean } = {};
-    if (activeCategory !== "All") params.category = activeCategory;
-    if (search.trim()) params.q = search.trim();
-    if (deliveryOnly) params.deliveryOnly = true;
+    getShops()
+      .then((data) => setAllShops(data.shops))
+      .catch(() => {});
+  }, []);
 
-    getShops(params)
-      .then((data) => { setShops(data.shops); setLoading(false); })
-      .catch((err) => { setError(messageFromError(err)); setLoading(false); });
+  // Initial + category/delivery filter fetch
+  React.useEffect(() => {
+    runSearch(search, activeCategory, deliveryOnly);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategory, deliveryOnly]);
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
+  function runSearch(q: string, category: string, delivery: boolean) {
     setLoading(true);
     const params: { category?: string; q?: string; deliveryOnly?: boolean } = {};
-    if (activeCategory !== "All") params.category = activeCategory;
-    if (search.trim()) params.q = search.trim();
-    if (deliveryOnly) params.deliveryOnly = true;
+    if (category !== "All") params.category = category;
+    if (q.trim()) params.q = q.trim();
+    if (delivery) params.deliveryOnly = true;
     getShops(params)
       .then((data) => { setShops(data.shops); setLoading(false); })
       .catch((err) => { setError(messageFromError(err)); setLoading(false); });
+  }
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    setActiveIdx(-1);
+    setShowSuggestions(value.trim().length > 0);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      runSearch(value, activeCategory, deliveryOnly);
+    }, 280);
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setShowSuggestions(false);
+    runSearch(search, activeCategory, deliveryOnly);
+    inputRef.current?.blur();
+  }
+
+  // Click-outside closes dropdown
+  React.useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  // Build suggestions — filter allShops client-side
+  const suggestions = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const results: Array<{ type: "shop"; shop: ShopSummary } | { type: "area"; area: string; count: number }> = [];
+
+    // Matching shops (max 4)
+    for (const s of allShops) {
+      if (s.name.toLowerCase().includes(q) || (s.category ?? "").toLowerCase().includes(q)) {
+        results.push({ type: "shop", shop: s });
+        if (results.filter((r) => r.type === "shop").length >= 4) break;
+      }
+    }
+
+    // Matching areas (deduplicated, max 2)
+    const seenAreas = new Set<string>();
+    for (const s of allShops) {
+      if (s.locationTag.toLowerCase().includes(q) && !seenAreas.has(s.locationTag)) {
+        seenAreas.add(s.locationTag);
+        const count = allShops.filter((x) => x.locationTag === s.locationTag).length;
+        results.push({ type: "area", area: s.locationTag, count });
+        if ([...results].filter((r) => r.type === "area").length >= 2) break;
+      }
+    }
+
+    return results.slice(0, 6);
+  }, [search, allShops]);
+
+  function handleSuggestionClick(item: typeof suggestions[number]) {
+    setShowSuggestions(false);
+    if (item.type === "shop") {
+      navigate(`/v/${item.shop.slug}`);
+    } else {
+      setSearch(item.area);
+      runSearch(item.area, activeCategory, deliveryOnly);
+      inputRef.current?.blur();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, -1));
+    } else if (e.key === "Enter" && activeIdx >= 0) {
+      e.preventDefault();
+      handleSuggestionClick(suggestions[activeIdx]);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
   }
 
   return (
@@ -511,13 +615,52 @@ function HomePage() {
           <p className="eyebrow">Your neighbourhood, online</p>
           <h1>Pick up from local shops near you</h1>
           <p>Browse, order & skip the queue. No middlemen, just your local shop.</p>
-          <form className="search-bar" onSubmit={handleSearch}>
-            <input
-              type="search"
-              placeholder="Search shops by name or area..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <form className="search-bar" onSubmit={handleSearchSubmit}>
+            <div className="search-wrap" ref={searchWrapRef}>
+              <input
+                ref={inputRef}
+                type="search"
+                placeholder="Search shops by name or area..."
+                value={search}
+                autoComplete="off"
+                onChange={(e) => handleSearchChange(e.target.value)}
+                onFocus={() => { if (search.trim()) setShowSuggestions(true); }}
+                onKeyDown={handleKeyDown}
+                aria-autocomplete="list"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+              />
+              {showSuggestions && suggestions.length > 0 ? (
+                <div className="search-suggestions" role="listbox">
+                  {suggestions.map((item, idx) => (
+                    <button
+                      key={item.type === "shop" ? item.shop.id : item.area}
+                      className="suggestion-item"
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      onPointerDown={(e) => { e.preventDefault(); handleSuggestionClick(item); }}
+                    >
+                      <span className="suggestion-icon">
+                        {item.type === "shop"
+                          ? (CATEGORY_EMOJIS[item.shop.category ?? "Other"] ?? "🏪")
+                          : "📍"}
+                      </span>
+                      <span className="suggestion-info">
+                        <span className="suggestion-name">
+                          {item.type === "shop"
+                            ? highlight(item.shop.name, search.trim())
+                            : highlight(item.area, search.trim())}
+                        </span>
+                        <span className="suggestion-sub">
+                          {item.type === "shop"
+                            ? item.shop.locationTag
+                            : `${item.count} shop${item.count !== 1 ? "s" : ""} in this area`}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <button type="submit">Search</button>
           </form>
         </div>
@@ -550,7 +693,7 @@ function HomePage() {
                 key={cat}
                 type="button"
                 className={`chip${activeCategory === cat ? " chip-active" : ""}`}
-                onClick={() => setActiveCategory(cat)}
+                onClick={() => { setActiveCategory(cat); setShowSuggestions(false); }}
               >
                 <span className="chip-emoji">{CATEGORY_EMOJIS[cat]}</span>
                 <span>{cat}</span>
@@ -559,7 +702,7 @@ function HomePage() {
             <button
               type="button"
               className={`chip${deliveryOnly ? " chip-active" : ""}`}
-              onClick={() => setDeliveryOnly((v) => !v)}
+              onClick={() => { setDeliveryOnly((v) => !v); setShowSuggestions(false); }}
             >
               <span className="chip-emoji">🛵</span>
               <span>Delivery</span>
