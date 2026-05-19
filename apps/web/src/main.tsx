@@ -1017,7 +1017,7 @@ function CustomerStorefront() {
                 const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
                 const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
                 return (
-                  <article className="menu-card" key={item.id}>
+                  <article className={`menu-card${(quantities[item.id] ?? 0) > 0 ? " in-cart" : ""}`} key={item.id}>
                     <img src={item.photoUrl} alt="" />
                     <div className="menu-card-body">
                       <div>
@@ -1182,14 +1182,52 @@ function CustomerStorefront() {
           </aside>
         </main>
       )}
+      {!placedOrder && cartLines.length > 0 ? (
+        <div className="cart-bar">
+          <div className="cart-bar-info">
+            <span className="cart-bar-count">{cartLines.reduce((s, l) => s + l.quantity, 0)} item{cartLines.reduce((s, l) => s + l.quantity, 0) !== 1 ? "s" : ""}</span>
+            <span className="cart-bar-total">₹{itemsTotal + (orderType === "delivery" ? ((vendor as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0) : 0)}</span>
+          </div>
+          <button
+            className="cart-bar-btn"
+            onClick={() => document.querySelector(".cart-panel")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+          >
+            View order →
+          </button>
+        </div>
+      ) : null}
     </Shell>
   );
 }
 
 function QuantityControl({ value, onChange }: { value: number; onChange: (quantity: number) => void }) {
+  const [popping, setPopping] = React.useState(false);
+  const prevRef = React.useRef(value);
+
+  React.useEffect(() => {
+    if (prevRef.current === 0 && value === 1) {
+      setPopping(true);
+      const t = setTimeout(() => setPopping(false), 300);
+      return () => clearTimeout(t);
+    }
+    prevRef.current = value;
+  }, [value]);
+
+  if (value === 0) {
+    return (
+      <button
+        className="qty-add-btn"
+        aria-label="Add to cart"
+        onClick={() => onChange(1)}
+      >
+        + Add
+      </button>
+    );
+  }
+
   return (
-    <div className="qty">
-      <button onClick={() => onChange(value - 1)} aria-label="Decrease quantity">-</button>
+    <div className={`qty${popping ? " popping" : ""}`}>
+      <button onClick={() => onChange(value - 1)} aria-label="Decrease quantity">−</button>
       <span>{value}</span>
       <button onClick={() => onChange(value + 1)} aria-label="Increase quantity">+</button>
     </div>
@@ -2265,13 +2303,19 @@ function AdminPage() {
 }
 
 function StatusBadge({ status }: { status: OrderStatus }) {
-  return <span className={`status status-${status.toLowerCase()}`}>{status.replace("_", " ")}</span>;
+  const isLive = status === "CONFIRMED" || status === "PREPARING" || status === "READY";
+  return (
+    <span className={`status status-${status.toLowerCase()}`}>
+      {isLive ? <span className="status-live-dot" /> : null}
+      {status.replace("_", " ")}
+    </span>
+  );
 }
 
-function TimelineRow({ label, time, done }: { active?: boolean; done?: boolean; label: string; time?: string }) {
+function TimelineRow({ label, time, done, active }: { active?: boolean; done?: boolean; label: string; time?: string }) {
   return (
     <div className="timeline-row">
-      <span className={done ? "dot done" : "dot"} />
+      <span className={done ? (active && !time ? "dot live" : "dot done") : "dot"} />
       <div>
         <strong>{label}</strong>
         {time ? <span>{time}</span> : null}
