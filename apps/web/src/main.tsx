@@ -309,6 +309,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<CustomerLoginPage />} />
           <Route path="/my-orders" element={<CustomerOrdersPage />} />
+          <Route path="/account" element={<CustomerProfilePage />} />
           <Route path="/v/:slug" element={<CustomerStorefront />} />
           <Route path="/order/:orderId" element={<OrderStatusPage />} />
           <Route path="/vendor" element={<VendorConsole />} />
@@ -339,7 +340,7 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
           {customer ? (
             <>
               <Link to="/my-orders">My Orders</Link>
-              <button className="nav-text-btn" onClick={logout}>Logout</button>
+              <Link to="/account">Account</Link>
             </>
           ) : (
             <Link to="/login">Login</Link>
@@ -365,10 +366,10 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
             </Link>
           )}
           {customer ? (
-            <button className="bottom-nav-item" onClick={logout}>
+            <Link to="/account" className={navClass("/account")}>
               <span className="bottom-nav-icon">👤</span>
-              <span>Logout</span>
-            </button>
+              <span>Account</span>
+            </Link>
           ) : (
             <Link to="/login" className={navClass("/login")}>
               <span className="bottom-nav-icon">👤</span>
@@ -970,9 +971,134 @@ function CustomerOrdersPage() {
           </div>
         )}
 
-        <section className="panel" style={{ marginTop: 32 }}>
-          <h2>Saved addresses</h2>
+      </main>
+    </Shell>
+  );
+}
+
+// ── Customer Profile Page ─────────────────────────────────────────────────────
+
+function CustomerProfilePage() {
+  const { customer, setCustomer, logout } = useCustomer();
+  const navigate = useNavigate();
+  const [editing, setEditing] = React.useState(false);
+  const [name, setName] = React.useState(customer?.name ?? "");
+  const [email, setEmail] = React.useState(customer?.email ?? "");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [successMsg, setSuccessMsg] = React.useState("");
+
+  React.useEffect(() => {
+    if (!customer) navigate("/login");
+  }, [customer, navigate]);
+
+  React.useEffect(() => {
+    setName(customer?.name ?? "");
+    setEmail(customer?.email ?? "");
+  }, [customer]);
+
+  if (!customer) return null;
+
+  async function saveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await updateCustomerProfile({ name: name.trim(), email: email.trim() || undefined });
+      setCustomer(res.customer);
+      setEditing(false);
+      setSuccessMsg("Profile updated");
+      setTimeout(() => setSuccessMsg(""), 3000);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleLogout() {
+    logout();
+    navigate("/");
+  }
+
+  return (
+    <Shell>
+      <section className="hero vendor-hero">
+        <div>
+          <p className="eyebrow">Your account</p>
+          <h1>Profile</h1>
+        </div>
+      </section>
+      <main className="orders-page">
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+        {successMsg ? <div className="success-banner">{successMsg}</div> : null}
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Personal info</h2>
+            {!editing && (
+              <button className="quiet-button" onClick={() => setEditing(true)}>Edit</button>
+            )}
+          </div>
+
+          {editing ? (
+            <form className="onboarding-form" onSubmit={saveProfile}>
+              <label>
+                Name
+                <input
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your name"
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </label>
+              <div className="button-row">
+                <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+                <button type="button" className="quiet-button" onClick={() => { setEditing(false); setName(customer.name); setEmail(customer.email ?? ""); }}>Cancel</button>
+              </div>
+            </form>
+          ) : (
+            <div className="profile-info-rows">
+              <div className="profile-info-row">
+                <span className="profile-info-label">Name</span>
+                <span>{customer.name}</span>
+              </div>
+              {customer.phone && (
+                <div className="profile-info-row">
+                  <span className="profile-info-label">Phone</span>
+                  <span>{customer.phone}</span>
+                </div>
+              )}
+              {customer.email && (
+                <div className="profile-info-row">
+                  <span className="profile-info-label">Email</span>
+                  <span>{customer.email}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="panel" style={{ marginTop: 24 }}>
+          <div className="panel-header">
+            <h2>Saved addresses</h2>
+          </div>
           <AddressBook />
+        </section>
+
+        <section className="panel" style={{ marginTop: 24 }}>
+          <button className="danger-button" style={{ width: "100%" }} onClick={handleLogout}>
+            Log out
+          </button>
         </section>
       </main>
     </Shell>
