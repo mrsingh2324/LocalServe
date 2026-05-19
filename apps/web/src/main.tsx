@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 import type { Address, Customer, DayHours, MenuItem, Order, OrderStatus, Vendor } from "@localserve/shared-types";
 import {
@@ -74,6 +74,19 @@ const SHOP_CATEGORIES = [
   "Electronics",
   "Other"
 ];
+
+const CATEGORY_EMOJIS: Record<string, string> = {
+  "All": "🛍️",
+  "Food & Snacks": "🍔",
+  "Tea & Coffee": "☕",
+  "Grocery": "🥦",
+  "General Store": "🏪",
+  "Bakery": "🥐",
+  "Pharmacy": "💊",
+  "Stationery": "✏️",
+  "Electronics": "📱",
+  "Other": "📦"
+};
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -258,6 +271,13 @@ function App() {
 
 function Shell({ children, hideVendorNav = false }: { children: React.ReactNode; hideVendorNav?: boolean }) {
   const { customer, logout } = useCustomer();
+  const location = useLocation();
+  const p = location.pathname;
+
+  function navClass(path: string) {
+    return `bottom-nav-item${p === path ? " active" : ""}`;
+  }
+
   return (
     <div>
       <header className="topbar">
@@ -275,6 +295,35 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
         </nav>
       </header>
       {children}
+      <nav className="bottom-nav" aria-label="Main navigation">
+        <div className="bottom-nav-inner">
+          <Link to="/" className={navClass("/")}>
+            <span className="bottom-nav-icon">🏠</span>
+            <span>Home</span>
+          </Link>
+          <Link to="/my-orders" className={navClass("/my-orders")}>
+            <span className="bottom-nav-icon">📦</span>
+            <span>Orders</span>
+          </Link>
+          {hideVendorNav ? null : (
+            <Link to="/vendor" className={navClass("/vendor")}>
+              <span className="bottom-nav-icon">🏪</span>
+              <span>Sell</span>
+            </Link>
+          )}
+          {customer ? (
+            <button className="bottom-nav-item" onClick={logout}>
+              <span className="bottom-nav-icon">👤</span>
+              <span>Logout</span>
+            </button>
+          ) : (
+            <Link to="/login" className={navClass("/login")}>
+              <span className="bottom-nav-icon">👤</span>
+              <span>Login</span>
+            </Link>
+          )}
+        </div>
+      </nav>
     </div>
   );
 }
@@ -318,8 +367,8 @@ function HomePage() {
       <section className="home-hero">
         <div className="home-hero-content">
           <p className="eyebrow">Your neighbourhood, online</p>
-          <h1>Order from local shops near you</h1>
-          <p>Skip the queue — browse, order, and pick up from shops around you. No delivery apps, no middlemen.</p>
+          <h1>Pick up from local shops near you</h1>
+          <p>Browse, order & skip the queue. No middlemen, just your local shop.</p>
           <form className="search-bar" onSubmit={handleSearch}>
             <input
               type="search"
@@ -332,6 +381,25 @@ function HomePage() {
         </div>
       </section>
 
+      <div className="value-strip">
+        <div className="value-item">
+          <span className="value-icon">⚡</span>
+          <span>Skip the queue</span>
+        </div>
+        <div className="value-item">
+          <span className="value-icon">🏪</span>
+          <span>Local shops only</span>
+        </div>
+        <div className="value-item">
+          <span className="value-icon">📱</span>
+          <span>Scan QR & order</span>
+        </div>
+        <div className="value-item">
+          <span className="value-icon">💳</span>
+          <span>Pay online or cash</span>
+        </div>
+      </div>
+
       <main className="home-main">
         <div className="filter-row">
           <div className="category-chips">
@@ -342,56 +410,69 @@ function HomePage() {
                 className={`chip${activeCategory === cat ? " chip-active" : ""}`}
                 onClick={() => setActiveCategory(cat)}
               >
-                {cat}
+                <span className="chip-emoji">{CATEGORY_EMOJIS[cat]}</span>
+                <span>{cat}</span>
               </button>
             ))}
+            <button
+              type="button"
+              className={`chip${deliveryOnly ? " chip-active" : ""}`}
+              onClick={() => setDeliveryOnly((v) => !v)}
+            >
+              <span className="chip-emoji">🛵</span>
+              <span>Delivery</span>
+            </button>
           </div>
-          <label className="delivery-toggle">
-            <input
-              type="checkbox"
-              checked={deliveryOnly}
-              onChange={(e) => setDeliveryOnly(e.target.checked)}
-            />
-            Delivery available
-          </label>
         </div>
 
         <ErrorBanner message={error} onDismiss={() => setError("")} />
 
         {loading ? (
-          <div className="empty">Finding shops...</div>
-        ) : shops.length === 0 ? (
-          <div className="empty">No shops found. Try a different search or category.</div>
-        ) : (
-          <div className="shops-grid">
-            {shops.map((shop) => (
-              <Link key={shop.id} to={`/v/${shop.slug}`} className="shop-card">
-                {shop.bannerUrl ? (
-                  <img src={shop.bannerUrl} alt="" className="shop-banner" />
-                ) : (
-                  <div className="shop-banner-placeholder" />
-                )}
-                <div className="shop-card-body">
-                  <div className="shop-card-top">
-                    <span className="shop-category">{shop.category}</span>
-                    <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
-                      {shop.isOpen ? "Open" : "Closed"}
-                    </span>
-                  </div>
-                  <h3>
-                    {shop.name}
-                    {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
-                  </h3>
-                  <p className="shop-location">{shop.locationTag}</p>
-                  {shop.deliveryEnabled ? (
-                    <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
-                  ) : (
-                    <span className="pickup-badge">Pickup only</span>
-                  )}
-                </div>
-              </Link>
-            ))}
+          <div className="empty">
+            <div className="empty-icon">🔍</div>
+            <p className="empty-title">Finding shops near you…</p>
           </div>
+        ) : shops.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">🏪</div>
+            <p className="empty-title">No shops found</p>
+            <p className="empty-sub">Try a different search term or category</p>
+          </div>
+        ) : (
+          <>
+            <p className="shops-section-title">{activeCategory === "All" ? "All Shops" : activeCategory} · {shops.length} near you</p>
+            <div className="shops-grid">
+              {shops.map((shop) => (
+                <Link key={shop.id} to={`/v/${shop.slug}`} className="shop-card">
+                  {shop.bannerUrl ? (
+                    <img src={shop.bannerUrl} alt="" className="shop-banner" />
+                  ) : (
+                    <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
+                  )}
+                  <div className="shop-card-body">
+                    <div className="shop-card-top">
+                      <span className="shop-category">{shop.category}</span>
+                      <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
+                        {shop.isOpen ? "● Open" : "● Closed"}
+                      </span>
+                    </div>
+                    <h3>
+                      {shop.name}
+                      {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
+                    </h3>
+                    <p className="shop-location">{shop.locationTag}</p>
+                    <div className="shop-meta">
+                      {shop.deliveryEnabled ? (
+                        <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
+                      ) : (
+                        <span className="pickup-badge">Pickup only</span>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </>
         )}
       </main>
     </Shell>
@@ -463,8 +544,9 @@ function CustomerLoginPage() {
     <Shell hideVendorNav>
       <main className="auth-page">
         <section className="panel auth-panel">
-          <h2>Login / Sign up</h2>
-          <p className="muted">Continue with your mobile number or email. We'll send you a one-time code.</p>
+          <div className="auth-brand-mark">⚡</div>
+          <h2>Welcome to QuickOrder</h2>
+          <p className="muted">Continue with your mobile number or email. We'll send a one-time code.</p>
           <ErrorBanner message={error} onDismiss={() => setError("")} />
           <div className="auth-method-toggle">
             <button
