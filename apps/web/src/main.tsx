@@ -37,9 +37,11 @@ import {
   getVendorOrders,
   getVendorQr,
   registerVendor,
+  registerVendorByEmail,
   requestCustomerEmailOtp,
   requestCustomerOtp,
   requestVendorEmailOtp,
+  requestVendorEmailRegisterOtp,
   requestVendorOtp,
   setStoredAdminToken,
   setStoredCustomerToken,
@@ -51,6 +53,7 @@ import {
   updateOrderStatus,
   updateVendorProfile,
   uploadMenuItemPhoto,
+  uploadVendorBanner,
   verifyCustomerEmailOtp,
   verifyCustomerOtp,
   verifyVendor,
@@ -378,38 +381,232 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
   );
 }
 
+// ── Shop Card + Grid ──────────────────────────────────────────────────────────
+
+function ShopCard({ shop }: { shop: ShopSummary }) {
+  return (
+    <Link to={`/v/${shop.slug}`} className="shop-card">
+      {shop.bannerUrl ? (
+        <img src={shop.bannerUrl} alt="" className="shop-banner" />
+      ) : (
+        <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
+      )}
+      <div className="shop-card-body">
+        <div className="shop-card-top">
+          <span className="shop-category">{shop.category}</span>
+          <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
+            {shop.isOpen ? "● Open" : "● Closed"}
+          </span>
+        </div>
+        <h3>
+          {shop.name}
+          {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
+        </h3>
+        <p className="shop-location">{shop.locationTag}</p>
+        {(shop.orderCount > 0 || shop.createdAt) ? (
+          <div className="shop-trust-row">
+            {shop.orderCount > 0 ? (
+              <span className="trust-pill trust-pill-orders">
+                🛒 {formatOrderCount(shop.orderCount)} orders
+              </span>
+            ) : null}
+            {shop.orderCount > 0 && shop.createdAt ? <span className="trust-dot" /> : null}
+            {shop.createdAt ? (
+              <span className="trust-pill trust-pill-since">Since {sinceYear(shop.createdAt)}</span>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="shop-meta" style={{ marginTop: 8 }}>
+          {shop.deliveryEnabled ? (
+            <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
+          ) : (
+            <span className="pickup-badge">Pickup only</span>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function ShopGrid({ shops, searchActive, activeCategory }: { shops: ShopSummary[]; searchActive: boolean; activeCategory: string }) {
+  const grouped = React.useMemo(() => {
+    if (searchActive) return null;
+    const map = new Map<string, ShopSummary[]>();
+    for (const shop of shops) {
+      const key = shop.locationTag || "Other";
+      const existing = map.get(key);
+      if (existing) existing.push(shop);
+      else map.set(key, [shop]);
+    }
+    return map.size > 1 ? map : null;
+  }, [shops, searchActive]);
+
+  if (grouped) {
+    return (
+      <>
+        {[...grouped.entries()].map(([area, areaShops]) => (
+          <div key={area} className="locality-section">
+            <h2 className="locality-heading">
+              <span className="locality-pin">📍</span>
+              {area}
+            </h2>
+            <div className="shops-grid">
+              {areaShops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="shops-section-title">
+        {searchActive ? `Results` : (activeCategory === "All" ? "All Shops" : activeCategory)} · {shops.length} near you
+      </p>
+      <div className="shops-grid">
+        {shops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+      </div>
+    </>
+  );
+}
+
 // ── Home Page ─────────────────────────────────────────────────────────────────
 
+function highlight(text: string, query: string): React.ReactNode {
+  if (!query) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark>{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
 function HomePage() {
+  const navigate = useNavigate();
+  const [allShops, setAllShops] = React.useState<ShopSummary[]>([]);
   const [shops, setShops] = React.useState<ShopSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [activeCategory, setActiveCategory] = React.useState("All");
   const [deliveryOnly, setDeliveryOnly] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const [activeIdx, setActiveIdx] = React.useState(-1);
+  const searchWrapRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Load all shops once for autocomplete
   React.useEffect(() => {
-    setLoading(true);
-    const params: { category?: string; q?: string; deliveryOnly?: boolean } = {};
-    if (activeCategory !== "All") params.category = activeCategory;
-    if (search.trim()) params.q = search.trim();
-    if (deliveryOnly) params.deliveryOnly = true;
+    getShops()
+      .then((data) => setAllShops(data.shops))
+      .catch(() => {});
+  }, []);
 
-    getShops(params)
-      .then((data) => { setShops(data.shops); setLoading(false); })
-      .catch((err) => { setError(messageFromError(err)); setLoading(false); });
+  // Initial + category/delivery filter fetch
+  React.useEffect(() => {
+    runSearch(search, activeCategory, deliveryOnly);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategory, deliveryOnly]);
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
+  function runSearch(q: string, category: string, delivery: boolean) {
     setLoading(true);
     const params: { category?: string; q?: string; deliveryOnly?: boolean } = {};
-    if (activeCategory !== "All") params.category = activeCategory;
-    if (search.trim()) params.q = search.trim();
-    if (deliveryOnly) params.deliveryOnly = true;
+    if (category !== "All") params.category = category;
+    if (q.trim()) params.q = q.trim();
+    if (delivery) params.deliveryOnly = true;
     getShops(params)
       .then((data) => { setShops(data.shops); setLoading(false); })
       .catch((err) => { setError(messageFromError(err)); setLoading(false); });
+  }
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    setActiveIdx(-1);
+    setShowSuggestions(value.trim().length > 0);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      runSearch(value, activeCategory, deliveryOnly);
+    }, 280);
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setShowSuggestions(false);
+    runSearch(search, activeCategory, deliveryOnly);
+    inputRef.current?.blur();
+  }
+
+  // Click-outside closes dropdown
+  React.useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  // Build suggestions — filter allShops client-side
+  const suggestions = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const results: Array<{ type: "shop"; shop: ShopSummary } | { type: "area"; area: string; count: number }> = [];
+
+    // Matching shops (max 4)
+    for (const s of allShops) {
+      if (s.name.toLowerCase().includes(q) || (s.category ?? "").toLowerCase().includes(q)) {
+        results.push({ type: "shop", shop: s });
+        if (results.filter((r) => r.type === "shop").length >= 4) break;
+      }
+    }
+
+    // Matching areas (deduplicated, max 2)
+    const seenAreas = new Set<string>();
+    for (const s of allShops) {
+      if (s.locationTag.toLowerCase().includes(q) && !seenAreas.has(s.locationTag)) {
+        seenAreas.add(s.locationTag);
+        const count = allShops.filter((x) => x.locationTag === s.locationTag).length;
+        results.push({ type: "area", area: s.locationTag, count });
+        if ([...results].filter((r) => r.type === "area").length >= 2) break;
+      }
+    }
+
+    return results.slice(0, 6);
+  }, [search, allShops]);
+
+  function handleSuggestionClick(item: typeof suggestions[number]) {
+    setShowSuggestions(false);
+    if (item.type === "shop") {
+      navigate(`/v/${item.shop.slug}`);
+    } else {
+      setSearch(item.area);
+      runSearch(item.area, activeCategory, deliveryOnly);
+      inputRef.current?.blur();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, -1));
+    } else if (e.key === "Enter" && activeIdx >= 0) {
+      e.preventDefault();
+      handleSuggestionClick(suggestions[activeIdx]);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
   }
 
   return (
@@ -419,13 +616,52 @@ function HomePage() {
           <p className="eyebrow">Your neighbourhood, online</p>
           <h1>Pick up from local shops near you</h1>
           <p>Browse, order & skip the queue. No middlemen, just your local shop.</p>
-          <form className="search-bar" onSubmit={handleSearch}>
-            <input
-              type="search"
-              placeholder="Search shops by name or area..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <form className="search-bar" onSubmit={handleSearchSubmit}>
+            <div className="search-wrap" ref={searchWrapRef}>
+              <input
+                ref={inputRef}
+                type="search"
+                placeholder="Search shops by name or area..."
+                value={search}
+                autoComplete="off"
+                onChange={(e) => handleSearchChange(e.target.value)}
+                onFocus={() => { if (search.trim()) setShowSuggestions(true); }}
+                onKeyDown={handleKeyDown}
+                aria-autocomplete="list"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+              />
+              {showSuggestions && suggestions.length > 0 ? (
+                <div className="search-suggestions" role="listbox">
+                  {suggestions.map((item, idx) => (
+                    <button
+                      key={item.type === "shop" ? item.shop.id : item.area}
+                      className="suggestion-item"
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      onPointerDown={(e) => { e.preventDefault(); handleSuggestionClick(item); }}
+                    >
+                      <span className="suggestion-icon">
+                        {item.type === "shop"
+                          ? (CATEGORY_EMOJIS[item.shop.category ?? "Other"] ?? "🏪")
+                          : "📍"}
+                      </span>
+                      <span className="suggestion-info">
+                        <span className="suggestion-name">
+                          {item.type === "shop"
+                            ? highlight(item.shop.name, search.trim())
+                            : highlight(item.area, search.trim())}
+                        </span>
+                        <span className="suggestion-sub">
+                          {item.type === "shop"
+                            ? item.shop.locationTag
+                            : `${item.count} shop${item.count !== 1 ? "s" : ""} in this area`}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <button type="submit">Search</button>
           </form>
         </div>
@@ -458,7 +694,7 @@ function HomePage() {
                 key={cat}
                 type="button"
                 className={`chip${activeCategory === cat ? " chip-active" : ""}`}
-                onClick={() => setActiveCategory(cat)}
+                onClick={() => { setActiveCategory(cat); setShowSuggestions(false); }}
               >
                 <span className="chip-emoji">{CATEGORY_EMOJIS[cat]}</span>
                 <span>{cat}</span>
@@ -467,7 +703,7 @@ function HomePage() {
             <button
               type="button"
               className={`chip${deliveryOnly ? " chip-active" : ""}`}
-              onClick={() => setDeliveryOnly((v) => !v)}
+              onClick={() => { setDeliveryOnly((v) => !v); setShowSuggestions(false); }}
             >
               <span className="chip-emoji">🛵</span>
               <span>Delivery</span>
@@ -488,55 +724,7 @@ function HomePage() {
             <p className="empty-sub">Try a different search term or category</p>
           </div>
         ) : (
-          <>
-            <p className="shops-section-title">{activeCategory === "All" ? "All Shops" : activeCategory} · {shops.length} near you</p>
-            <div className="shops-grid">
-              {shops.map((shop) => (
-                <Link key={shop.id} to={`/v/${shop.slug}`} className="shop-card">
-                  {shop.bannerUrl ? (
-                    <img src={shop.bannerUrl} alt="" className="shop-banner" />
-                  ) : (
-                    <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
-                  )}
-                  <div className="shop-card-body">
-                    <div className="shop-card-top">
-                      <span className="shop-category">{shop.category}</span>
-                      <span className={`shop-status ${shop.isOpen ? "open" : "closed"}`}>
-                        {shop.isOpen ? "● Open" : "● Closed"}
-                      </span>
-                    </div>
-                    <h3>
-                      {shop.name}
-                      {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
-                    </h3>
-                    <p className="shop-location">{shop.locationTag}</p>
-                    {(shop.orderCount > 0 || shop.createdAt) ? (
-                      <div className="shop-trust-row">
-                        {shop.orderCount > 0 ? (
-                          <span className="trust-pill trust-pill-orders">
-                            🛒 {formatOrderCount(shop.orderCount)} orders
-                          </span>
-                        ) : null}
-                        {shop.orderCount > 0 && shop.createdAt ? <span className="trust-dot" /> : null}
-                        {shop.createdAt ? (
-                          <span className="trust-pill trust-pill-since">
-                            Since {sinceYear(shop.createdAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <div className="shop-meta" style={{ marginTop: 8 }}>
-                      {shop.deliveryEnabled ? (
-                        <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
-                      ) : (
-                        <span className="pickup-badge">Pickup only</span>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </>
+          <ShopGrid shops={shops} searchActive={search.trim().length > 0} activeCategory={activeCategory} />
         )}
       </main>
     </Shell>
@@ -689,9 +877,11 @@ function CustomerLoginPage() {
 function CustomerOrdersPage() {
   const { customer } = useCustomer();
   const navigate = useNavigate();
-  const [orders, setOrders] = React.useState<(Order & { vendorName: string })[]>([]);
+  const { setQuantity, clear } = useCartStore();
+  const [orders, setOrders] = React.useState<(Order & { vendorName: string; vendorSlug: string })[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
+  const [reorderToast, setReorderToast] = React.useState("");
 
   React.useEffect(() => {
     if (!customer) {
@@ -713,6 +903,16 @@ function CustomerOrdersPage() {
     }
   }
 
+  function handleReorder(order: Order & { vendorSlug: string; vendorName: string }) {
+    clear();
+    for (const item of order.items) {
+      setQuantity(item.menuItemId, item.quantity);
+    }
+    setReorderToast(`${order.items.length} item${order.items.length !== 1 ? "s" : ""} added — check availability`);
+    setTimeout(() => setReorderToast(""), 3500);
+    navigate(`/v/${order.vendorSlug}`);
+  }
+
   return (
     <Shell>
       <section className="hero vendor-hero">
@@ -721,6 +921,11 @@ function CustomerOrdersPage() {
           <h1>My Orders</h1>
         </div>
       </section>
+      {reorderToast ? (
+        <div className="reorder-toast">
+          🛒 {reorderToast}
+        </div>
+      ) : null}
       <main className="orders-page">
         <ErrorBanner message={error} onDismiss={() => setError("")} />
         {loading ? (
@@ -741,7 +946,7 @@ function CustomerOrdersPage() {
                   </div>
                   <StatusBadge status={order.status} />
                 </div>
-                <p className="order-items-list">{order.items.map((i) => `${i.name} x${i.quantity}`).join(", ")}</p>
+                <p className="order-items-list">{order.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</p>
                 <div className="order-history-bottom">
                   <div>
                     <span className="muted">{new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>
@@ -749,6 +954,11 @@ function CustomerOrdersPage() {
                   </div>
                   <div className="button-row">
                     <strong>₹{order.totalAmount}</strong>
+                    {order.status === "COLLECTED" && order.vendorSlug ? (
+                      <button className="reorder-btn" onClick={() => handleReorder(order)}>
+                        🔁 Reorder
+                      </button>
+                    ) : null}
                     <Link to={`/order/${order.id}`} className="small-link">Track</Link>
                     {["PENDING", "CONFIRMED"].includes(order.status) ? (
                       <button className="danger-button small-btn" onClick={() => handleCancel(order.id)}>Cancel</button>
@@ -1017,7 +1227,7 @@ function CustomerStorefront() {
                 const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
                 const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
                 return (
-                  <article className="menu-card" key={item.id}>
+                  <article className={`menu-card${(quantities[item.id] ?? 0) > 0 ? " in-cart" : ""}`} key={item.id}>
                     <img src={item.photoUrl} alt="" />
                     <div className="menu-card-body">
                       <div>
@@ -1182,14 +1392,52 @@ function CustomerStorefront() {
           </aside>
         </main>
       )}
+      {!placedOrder && cartLines.length > 0 ? (
+        <div className="cart-bar">
+          <div className="cart-bar-info">
+            <span className="cart-bar-count">{cartLines.reduce((s, l) => s + l.quantity, 0)} item{cartLines.reduce((s, l) => s + l.quantity, 0) !== 1 ? "s" : ""}</span>
+            <span className="cart-bar-total">₹{itemsTotal + (orderType === "delivery" ? ((vendor as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0) : 0)}</span>
+          </div>
+          <button
+            className="cart-bar-btn"
+            onClick={() => document.querySelector(".cart-panel")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+          >
+            View order →
+          </button>
+        </div>
+      ) : null}
     </Shell>
   );
 }
 
 function QuantityControl({ value, onChange }: { value: number; onChange: (quantity: number) => void }) {
+  const [popping, setPopping] = React.useState(false);
+  const prevRef = React.useRef(value);
+
+  React.useEffect(() => {
+    if (prevRef.current === 0 && value === 1) {
+      setPopping(true);
+      const t = setTimeout(() => setPopping(false), 300);
+      return () => clearTimeout(t);
+    }
+    prevRef.current = value;
+  }, [value]);
+
+  if (value === 0) {
+    return (
+      <button
+        className="qty-add-btn"
+        aria-label="Add to cart"
+        onClick={() => onChange(1)}
+      >
+        + Add
+      </button>
+    );
+  }
+
   return (
-    <div className="qty">
-      <button onClick={() => onChange(value - 1)} aria-label="Decrease quantity">-</button>
+    <div className={`qty${popping ? " popping" : ""}`}>
+      <button onClick={() => onChange(value - 1)} aria-label="Decrease quantity">−</button>
       <span>{value}</span>
       <button onClick={() => onChange(value + 1)} aria-label="Increase quantity">+</button>
     </div>
@@ -1333,6 +1581,59 @@ function OrderStatusPage() {
   );
 }
 
+// ── Banner Upload ─────────────────────────────────────────────────────────────
+
+function BannerUpload({ currentUrl, onUploaded }: { currentUrl?: string; onUploaded: (vendor: import("@localserve/shared-types").Vendor) => void }) {
+  const [uploading, setUploading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+    if (file.size > 4 * 1024 * 1024) { setError("Image must be under 4 MB."); return; }
+    setError("");
+    setUploading(true);
+    try {
+      const { vendor } = await uploadVendorBanner(file);
+      onUploaded(vendor);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="banner-upload-wrap">
+      <div
+        className={`banner-upload-target${uploading ? " uploading" : ""}`}
+        style={currentUrl ? { backgroundImage: `url(${currentUrl})` } : undefined}
+        onClick={() => !uploading && inputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+        aria-label="Upload shop banner"
+      >
+        {uploading ? (
+          <span className="banner-upload-label">Uploading…</span>
+        ) : currentUrl ? (
+          <span className="banner-upload-label banner-change-label">📷 Change photo</span>
+        ) : (
+          <div className="banner-upload-empty">
+            <span className="banner-upload-icon">🖼️</span>
+            <span className="banner-upload-label">Add shop banner</span>
+            <span className="banner-upload-hint">Click or drag & drop · JPG/PNG under 4 MB</span>
+          </div>
+        )}
+      </div>
+      <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }} />
+      {error ? <p className="field-error">{error}</p> : null}
+    </div>
+  );
+}
+
 // ── Vendor Console ────────────────────────────────────────────────────────────
 
 function VendorConsole() {
@@ -1344,6 +1645,7 @@ function VendorConsole() {
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
   const [loginDraft, setLoginDraft] = React.useState({ phone: "", email: "", otpCode: "" });
   const [loginMethod, setLoginMethod] = React.useState<"phone" | "email">("phone");
+  const [signupMethod, setSignupMethod] = React.useState<"phone" | "email">("email");
   const [profileDraft, setProfileDraft] = React.useState({
     name: "",
     phone: "",
@@ -1526,9 +1828,12 @@ function VendorConsole() {
     setError("");
     setAuthMessage("");
     try {
-      const response = await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
+      const response = signupMethod === "email"
+        ? await requestVendorEmailRegisterOtp(profileDraft.email)
+        : await requestVendorOtp({ phone: profileDraft.phone, purpose: "register" });
       setRegisterOtpSent(true);
-      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `OTP sent to ${profileDraft.phone}.`);
+      const target = signupMethod === "email" ? profileDraft.email : profileDraft.phone;
+      setAuthMessage(response.devOtp ? `Dev OTP: ${response.devOtp}` : `Code sent to ${target}.`);
     } catch (otpError) {
       setRegisterOtpSent(false);
       setError(messageFromError(otpError));
@@ -1570,7 +1875,16 @@ function VendorConsole() {
     event.preventDefault();
     setError("");
     try {
-      const response = await registerVendor(profileDraft);
+      const response = signupMethod === "email"
+        ? await registerVendorByEmail({
+            name: profileDraft.name,
+            email: profileDraft.email,
+            otpCode: profileDraft.otpCode,
+            locationTag: profileDraft.locationTag,
+            upiId: profileDraft.upiId,
+            phone: profileDraft.phone || undefined
+          })
+        : await registerVendor(profileDraft);
       setStoredVendorToken(response.token);
       setVendor(response.vendor);
       setIssuedToken(response.token);
@@ -1747,50 +2061,120 @@ function VendorConsole() {
                 <button className="text-button" onClick={() => setAuthMode("entry")}>Back</button>
               </div>
               <ErrorBanner message={error} onDismiss={() => setError("")} />
+              <div className="auth-method-toggle">
+                <button
+                  type="button"
+                  className={signupMethod === "email" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setSignupMethod("email"); setRegisterOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
+                  Email
+                </button>
+                <button
+                  type="button"
+                  className={signupMethod === "phone" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => { setSignupMethod("phone"); setRegisterOtpSent(false); setAuthMessage(""); setError(""); }}
+                >
+                  Mobile number
+                </button>
+              </div>
               <form className="onboarding-form" onSubmit={registerShop}>
                 <label>
                   Shop name
                   <input required value={profileDraft.name} onChange={(event) => setProfileDraft((draft) => ({ ...draft, name: event.target.value }))} />
                 </label>
-                <label>
-                  Mobile number
-                  <input required value={profileDraft.phone} onChange={(event) => {
-                    setProfileDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
-                    setRegisterOtpSent(false);
-                    setAuthMessage("");
-                  }} />
-                </label>
-                <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.phone}>Send OTP</button>
-                {registerOtpSent ? (
-                  <label>
-                    OTP
-                    <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
-                  </label>
-                ) : null}
+
+                {signupMethod === "email" ? (
+                  <>
+                    <label>
+                      Email address
+                      <input required type="email" value={profileDraft.email} onChange={(event) => {
+                        setProfileDraft((draft) => ({ ...draft, email: event.target.value, otpCode: "" }));
+                        setRegisterOtpSent(false);
+                        setAuthMessage("");
+                      }} />
+                    </label>
+                    <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.email}>
+                      Send verification code
+                    </button>
+                    {registerOtpSent ? (
+                      <label>
+                        Verification code
+                        <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} placeholder="Check your inbox" />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <label>
+                      Mobile number
+                      <input required value={profileDraft.phone} onChange={(event) => {
+                        setProfileDraft((draft) => ({ ...draft, phone: event.target.value, otpCode: "" }));
+                        setRegisterOtpSent(false);
+                        setAuthMessage("");
+                      }} />
+                    </label>
+                    <button type="button" className="quiet-button" onClick={sendRegisterOtp} disabled={!profileDraft.phone}>
+                      Send OTP
+                    </button>
+                    {registerOtpSent ? (
+                      <label>
+                        OTP
+                        <input value={profileDraft.otpCode} onChange={(event) => setProfileDraft((draft) => ({ ...draft, otpCode: event.target.value }))} />
+                      </label>
+                    ) : null}
+                  </>
+                )}
+
                 <label>
                   Location / area
                   <input required value={profileDraft.locationTag} onChange={(event) => setProfileDraft((draft) => ({ ...draft, locationTag: event.target.value }))} />
                 </label>
-                <label>
-                  Email (optional — enables email login)
-                  <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
-                </label>
+
+                {signupMethod === "email" ? (
+                  <label>
+                    Mobile number <span className="form-hint">(optional — for SMS order alerts)</span>
+                    <input value={profileDraft.phone} onChange={(event) => setProfileDraft((draft) => ({ ...draft, phone: event.target.value }))} />
+                  </label>
+                ) : (
+                  <label>
+                    Email <span className="form-hint">(optional — enables email login)</span>
+                    <input type="email" value={profileDraft.email} onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))} />
+                  </label>
+                )}
+
                 <label>
                   UPI ID
                   <input required value={profileDraft.upiId} onChange={(event) => setProfileDraft((draft) => ({ ...draft, upiId: event.target.value }))} />
                 </label>
-                <label>
-                  Password
-                  <input required minLength={6} type="password" value={profileDraft.password} onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))} />
-                </label>
+                {signupMethod === "phone" ? (
+                  <label>
+                    Password
+                    <input required minLength={6} type="password" value={profileDraft.password} onChange={(event) => setProfileDraft((draft) => ({ ...draft, password: event.target.value }))} />
+                  </label>
+                ) : null}
                 {authMessage ? <p className="token-note">{authMessage}</p> : null}
-                <button disabled={!registerOtpSent || !profileDraft.otpCode || !profileDraft.name || !profileDraft.locationTag || !profileDraft.upiId || profileDraft.password.length < 6}>Create shop</button>
+                <button disabled={
+                  !registerOtpSent || !profileDraft.otpCode || !profileDraft.name || !profileDraft.locationTag || !profileDraft.upiId ||
+                  (signupMethod === "phone" && profileDraft.password.length < 6)
+                }>
+                  Create shop
+                </button>
               </form>
             </section>
           ) : null}
         </main>
       ) : (
         <main className="vendor-grid">
+          {!(vendor as { bannerUrl?: string }).bannerUrl ? (
+            <div className="setup-nudge">
+              <div className="setup-nudge-icon">🖼️</div>
+              <div>
+                <strong>Add a shop banner</strong>
+                <p>A banner makes your shop stand out on the home page. Takes 10 seconds.</p>
+              </div>
+              <button className="nudge-cta" onClick={() => goToPanel("shop-profile")}>Add photo →</button>
+            </div>
+          ) : null}
           <section className="panel vendor-action-panel">
             <p className="eyebrow">Quick actions</p>
             <div className="vendor-action-grid">
@@ -1841,7 +2225,12 @@ function VendorConsole() {
 
           <section className="panel" id="shop-profile">
             <h2>Shop profile</h2>
-            <form className="onboarding-form" onSubmit={updateProfile}>
+            <p className="muted small" style={{ marginBottom: 16 }}>Your banner appears on the home page and your storefront. Recommended: 1200×400 px.</p>
+            <BannerUpload
+              currentUrl={(vendor as { bannerUrl?: string }).bannerUrl}
+              onUploaded={(updated) => { setVendor(updated); }}
+            />
+            <form className="onboarding-form" style={{ marginTop: 20 }} onSubmit={updateProfile}>
               <label>
                 Shop name
                 <input value={profileDraft.name} onChange={(event) => setProfileDraft((draft) => ({ ...draft, name: event.target.value }))} />
@@ -2265,13 +2654,19 @@ function AdminPage() {
 }
 
 function StatusBadge({ status }: { status: OrderStatus }) {
-  return <span className={`status status-${status.toLowerCase()}`}>{status.replace("_", " ")}</span>;
+  const isLive = status === "CONFIRMED" || status === "PREPARING" || status === "READY";
+  return (
+    <span className={`status status-${status.toLowerCase()}`}>
+      {isLive ? <span className="status-live-dot" /> : null}
+      {status.replace("_", " ")}
+    </span>
+  );
 }
 
-function TimelineRow({ label, time, done }: { active?: boolean; done?: boolean; label: string; time?: string }) {
+function TimelineRow({ label, time, done, active }: { active?: boolean; done?: boolean; label: string; time?: string }) {
   return (
     <div className="timeline-row">
-      <span className={done ? "dot done" : "dot"} />
+      <span className={done ? (active && !time ? "dot live" : "dot done") : "dot"} />
       <div>
         <strong>{label}</strong>
         {time ? <span>{time}</span> : null}

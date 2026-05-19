@@ -313,6 +313,14 @@ const vendorRegistrationSchema = z.object({
   otpCode: z.string().min(4).max(8),
   password: z.string().min(6).default("demo123")
 });
+const vendorEmailRegistrationSchema = z.object({
+  name: z.string().min(2).max(120),
+  email: z.string().email(),
+  otpCode: z.string().min(4).max(8),
+  locationTag: z.string().min(2).max(120),
+  upiId: z.string().min(3).max(80),
+  phone: z.string().min(10).max(15).optional().or(z.literal(""))
+});
 const vendorProfileSchema = z.object({
   name: z.string().min(2).max(120),
   locationTag: z.string().min(2).max(120),
@@ -1236,6 +1244,65 @@ app.post("/auth/vendor/email/otp/verify", authLimiter, asyncHandler(async (req, 
   res.json({ vendor: await buildVendorResponse(vendor), token: createVendorToken(vendor.id) });
 }));
 
+app.post("/auth/vendor/email/register/request", authLimiter, asyncHandler(async (req, res) => {
+  const { email } = emailOtpRequestSchema.parse(req.body);
+  const normalized = email.toLowerCase();
+  if (vendors.some((v) => v.email?.toLowerCase() === normalized)) {
+    res.status(409).json({ error: "An account already exists for this email. Please login instead." });
+    return;
+  }
+  const { code, delivered } = await sendEmailOtp(normalized, "vendor-email-register");
+  if (process.env.NODE_ENV === "production" && !delivered) {
+    res.status(502).json({ error: "Could not send the verification email right now. Please try again shortly." });
+    return;
+  }
+  res.json({
+    status: "sent",
+    channel: "email",
+    expiresInSeconds: Math.round(otpTtlMs / 1000),
+    ...(process.env.NODE_ENV === "production" ? {} : { devOtp: code })
+  });
+}));
+
+app.post("/vendor/register/email", authLimiter, asyncHandler(async (req, res) => {
+  const body = vendorEmailRegistrationSchema.parse(req.body);
+  const normalized = body.email.toLowerCase();
+  if (vendors.some((v) => v.email?.toLowerCase() === normalized)) {
+    res.status(409).json({ error: "An account already exists for this email. Please login instead." });
+    return;
+  }
+  if (!(await verifyOtp(normalized, "vendor-email-register", body.otpCode))) {
+    res.status(401).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+  const phone = body.phone?.trim() || `email_${Date.now()}`;
+  if (body.phone?.trim() && vendors.some((v) => v.phone === body.phone?.trim())) {
+    res.status(409).json({ error: "A shop with this mobile number already exists." });
+    return;
+  }
+  const slug = uniqueSlug(body.name);
+  const vendor: StoredVendor = {
+    id: crypto.randomUUID(),
+    passwordHash: bcrypt.hashSync(crypto.randomUUID(), 10),
+    qrUrl: "",
+    name: body.name,
+    slug,
+    phone,
+    email: normalized,
+    locationTag: body.locationTag,
+    upiId: body.upiId,
+    storefrontUrl: `${publicAppUrl}/v/${slug}`,
+    category: "General Store",
+    isOpen: true,
+    deliveryEnabled: false,
+    deliveryFeeFlat: 0,
+    createdAt: new Date().toISOString()
+  };
+  vendors.push(vendor);
+  await persistState();
+  res.status(201).json({ vendor: await buildVendorResponse(vendor), token: createVendorToken(vendor.id) });
+}));
+
 app.post("/auth/vendor/login", authLimiter, asyncHandler(async (req, res) => {
   if (process.env.NODE_ENV === "production" && process.env.ENABLE_PASSWORD_LOGIN !== "true") {
     res.status(403).json({ error: "Password login is disabled. Use OTP login." });
@@ -1593,7 +1660,7 @@ app.get("/customer/orders", requireCustomer, asyncHandler(async (req, res) => {
   }
   const customerOrderList = customerOrders(customerId).map((order) => {
     const vendor = getVendorById(order.vendorId);
-    return { ...order, vendorName: vendor?.name ?? "Shop" };
+    return { ...order, vendorName: vendor?.name ?? "Shop", vendorSlug: vendor?.slug ?? "" };
   });
   res.json({ orders: customerOrderList });
 }));
@@ -1915,6 +1982,27 @@ app.post("/vendor/menu/:id/photo", requireVendor, upload.single("photo"), asyncH
   item.photoUrl = photoUrl;
   await persistState();
   res.json({ menuItem: item });
+}));
+
+app.post("/vendor/banner", requireVendor, upload.single("banner"), asyncHandler(async (req, res) => {
+  const vendor = getAuthedVendor(req);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  if (!req.file) { res.status(400).json({ error: "Banner file is required" }); return; }
+  if (!s3Client || !storageBucket) {
+    res.status(503).json({ error: "Photo storage is not configured on this server." });
+    return;
+  }
+  const key = `vendors/${vendor.id}/banner/${crypto.randomUUID()}.${extensionForMimeType(req.file.mimetype)}`;
+  await s3Client.send(new PutObjectCommand({
+    Bucket: storageBucket,
+    Key: key,
+    Body: req.file.buffer,
+    ContentType: req.file.mimetype,
+    CacheControl: "public, max-age=31536000, immutable"
+  }));
+  vendor.bannerUrl = publicStorageUrl(key);
+  await persistState();
+  res.json({ vendor: await buildVendorResponse(vendor) });
 }));
 
 app.delete("/vendor/menu/:id", requireVendor, asyncHandler(async (req, res) => {

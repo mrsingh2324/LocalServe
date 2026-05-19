@@ -124,6 +124,20 @@ export function requestVendorEmailOtp(email: string) {
   });
 }
 
+export function requestVendorEmailRegisterOtp(email: string) {
+  return request<{ status: string; channel: string; expiresInSeconds: number; devOtp?: string }>("/auth/vendor/email/register/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function registerVendorByEmail(payload: { name: string; email: string; otpCode: string; locationTag: string; upiId: string; phone?: string }) {
+  return request<{ vendor: Vendor; token: string }>("/vendor/register/email", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function verifyVendorEmailOtp(payload: { email: string; otpCode: string }) {
   return request<{ vendor: Vendor; token: string }>("/auth/vendor/email/otp/verify", {
     method: "POST",
@@ -242,7 +256,7 @@ export function deleteCustomerAddress(id: string) {
 }
 
 export function getCustomerOrders() {
-  return request<{ orders: (Order & { vendorName: string })[] }>("/customer/orders", {
+  return request<{ orders: (Order & { vendorName: string; vendorSlug: string })[] }>("/customer/orders", {
     headers: customerAuthHeaders()
   });
 }
@@ -349,6 +363,18 @@ export async function uploadMenuItemPhoto(id: string, file: File) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ menuItem: MenuItem }>;
+}
+
+export async function uploadVendorBanner(file: File) {
+  const formData = new FormData();
+  formData.append("banner", file);
+  const response = await fetch(`${API_URL}/vendor/banner`, {
+    method: "POST",
+    headers: vendorAuthHeaders(),
+    body: formData
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ vendor: Vendor }>;
 }
 
 export function deleteMenuItem(id: string) {
