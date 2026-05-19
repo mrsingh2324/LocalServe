@@ -11,6 +11,7 @@ import {
   addCustomerAddress,
   adminLogin,
   cancelOrder,
+  rateOrder,
   clearStoredAdminToken,
   clearStoredCustomerToken,
   confirmOrderPayment,
@@ -404,8 +405,12 @@ function ShopCard({ shop }: { shop: ShopSummary }) {
           {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
         </h3>
         <p className="shop-location">{shop.locationTag}</p>
-        {(shop.orderCount > 0 || shop.createdAt) ? (
+        {(shop.orderCount > 0 || shop.createdAt || shop.ratingAvg) ? (
           <div className="shop-trust-row">
+            {shop.ratingAvg ? (
+              <span className="trust-pill trust-pill-rating">★ {shop.ratingAvg.toFixed(1)}</span>
+            ) : null}
+            {shop.ratingAvg && (shop.orderCount > 0 || shop.createdAt) ? <span className="trust-dot" /> : null}
             {shop.orderCount > 0 ? (
               <span className="trust-pill trust-pill-orders">
                 🛒 {formatOrderCount(shop.orderCount)} orders
@@ -875,6 +880,40 @@ function CustomerLoginPage() {
 
 // ── Customer Orders Page ──────────────────────────────────────────────────────
 
+function StarRating({ orderId, onRated }: { orderId: string; onRated: (stars: number) => void }) {
+  const [hovered, setHovered] = React.useState(0);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  async function submit(stars: number) {
+    setSubmitting(true);
+    try {
+      await rateOrder(orderId, stars);
+      onRated(stars);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="star-rating" aria-label="Rate this order">
+      <span className="star-rating-label">Rate</span>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          className={`star-btn${n <= hovered ? " lit" : ""}`}
+          onMouseEnter={() => setHovered(n)}
+          onMouseLeave={() => setHovered(0)}
+          onClick={() => !submitting && submit(n)}
+          aria-label={`${n} star${n !== 1 ? "s" : ""}`}
+          disabled={submitting}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CustomerOrdersPage() {
   const { customer } = useCustomer();
   const navigate = useNavigate();
@@ -948,6 +987,16 @@ function CustomerOrdersPage() {
                   <StatusBadge status={order.status} />
                 </div>
                 <p className="order-items-list">{order.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</p>
+                {order.status === "COLLECTED" && !order.rating ? (
+                  <StarRating
+                    orderId={order.id}
+                    onRated={(stars) =>
+                      setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, rating: stars } : o))
+                    }
+                  />
+                ) : order.rating ? (
+                  <p className="rated-line">{"★".repeat(order.rating)}{"☆".repeat(5 - order.rating)} <span className="muted">Your rating</span></p>
+                ) : null}
                 <div className="order-history-bottom">
                   <div>
                     <span className="muted">{new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>
@@ -1454,6 +1503,12 @@ function CustomerStorefront() {
           <p>{(vendor as { locationTag?: string }).locationTag}</p>
           {deliveryEnabled ? (
             <p className="hero-delivery-note">Delivery available · ₹{(vendor as { deliveryFeeFlat?: number }).deliveryFeeFlat ?? 0} delivery fee</p>
+          ) : null}
+          {(vendor as { ratingAvg?: number | null }).ratingAvg ? (
+            <p className="hero-rating">
+              ★ {((vendor as { ratingAvg: number }).ratingAvg).toFixed(1)}
+              <span className="hero-rating-count"> ({(vendor as { ratingCount?: number }).ratingCount} review{(vendor as { ratingCount?: number }).ratingCount !== 1 ? "s" : ""})</span>
+            </p>
           ) : null}
         </div>
       </section>

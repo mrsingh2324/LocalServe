@@ -2099,6 +2099,80 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* ── Star Rating ──────────────────────────────────────────────────────────── */
+
+.star-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 4px;
+}
+
+.star-rating-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--border);
+  cursor: pointer;
+  padding: 2px;
+  transition: color 0.1s, transform 0.1s;
+}
+
+.star-btn:hover,
+.star-btn.lit {
+  color: #f59e0b;
+}
+
+.star-btn:active {
+  transform: scale(1.2);
+}
+
+.star-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rated-line {
+  font-size: 14px;
+  padding: 4px 0;
+  color: #f59e0b;
+  letter-spacing: 2px;
+}
+
+.rated-line .muted {
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.trust-pill-rating {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.hero-rating {
+  font-size: 14px;
+  font-weight: 600;
+  color: #92400e;
+  margin-top: 4px !important;
+}
+
+.hero-rating-count {
+  font-weight: 400;
+  color: var(--muted);
+}
+
 /* ── Cash Payment Hint ────────────────────────────────────────────────────── */
 
 .cash-hint {
