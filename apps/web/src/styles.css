@@ -2099,6 +2099,58 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* ── Order Accept Countdown ───────────────────────────────────────────────── */
+
+.countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #22a559;
+  background: #e6f9ee;
+  border-radius: var(--r-full);
+  padding: 3px 9px 3px 6px;
+  line-height: 1;
+  transition: background 0.3s, color 0.3s;
+}
+
+.countdown.warning {
+  color: #b45309;
+  background: #fff7ed;
+}
+
+.countdown.urgent {
+  color: #dc2626;
+  background: #fef2f2;
+  animation: pulse-dot 1s ease infinite;
+}
+
+.countdown.expired {
+  color: var(--muted);
+  background: var(--bg-card);
+}
+
+.countdown-ring {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+  flex-shrink: 0;
+}
+
+.countdown-ring circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  opacity: 0.25;
+}
+
+.countdown-ring .countdown-ring-fill {
+  opacity: 1;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
 /* ── Menu Category Tabs ───────────────────────────────────────────────────── */
 
 .menu-cat-tabs {

@@ -1846,6 +1846,59 @@ function BannerUpload({ currentUrl, onUploaded }: { currentUrl?: string; onUploa
   );
 }
 
+// ── Order Accept Countdown ────────────────────────────────────────────────────
+
+function OrderCountdown({
+  createdAt,
+  windowMinutes,
+  onExpired,
+}: {
+  createdAt: string;
+  windowMinutes: number;
+  onExpired: () => void;
+}) {
+  const deadlineMs = new Date(createdAt).getTime() + windowMinutes * 60 * 1000;
+  const [remaining, setRemaining] = React.useState(() => Math.max(0, deadlineMs - Date.now()));
+  const firedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (remaining === 0) return;
+    const interval = setInterval(() => {
+      const left = Math.max(0, deadlineMs - Date.now());
+      setRemaining(left);
+      if (left === 0 && !firedRef.current) {
+        firedRef.current = true;
+        onExpired();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [deadlineMs, onExpired, remaining]);
+
+  const totalMs = windowMinutes * 60 * 1000;
+  const minutes = Math.floor(remaining / 60000);
+  const seconds = Math.floor((remaining % 60000) / 1000);
+  const urgent = remaining < 2 * 60 * 1000;
+  const warning = remaining < 5 * 60 * 1000;
+  const pct = remaining / totalMs;
+
+  if (remaining === 0) return <span className="countdown expired">Expired</span>;
+
+  return (
+    <span className={`countdown${urgent ? " urgent" : warning ? " warning" : ""}`}>
+      <svg className="countdown-ring" viewBox="0 0 20 20">
+        <circle cx="10" cy="10" r="8" />
+        <circle
+          cx="10" cy="10" r="8"
+          className="countdown-ring-fill"
+          strokeDasharray={`${2 * Math.PI * 8}`}
+          strokeDashoffset={`${2 * Math.PI * 8 * (1 - pct)}`}
+        />
+      </svg>
+      {minutes}:{String(seconds).padStart(2, "0")}
+    </span>
+  );
+}
+
 // ── Vendor Console ────────────────────────────────────────────────────────────
 
 function VendorConsole() {
@@ -2403,12 +2456,26 @@ function VendorConsole() {
               <span>{orders.length} orders</span>
             </div>
             {orders.length === 0 ? <p className="muted">New paid orders will appear here instantly.</p> : null}
-            {orders.map((order) => (
+            {orders.map((order) => {
+              const windowMinutes = vendor?.acceptWindowMinutes ?? 15;
+              const showCountdown = order.status === "CONFIRMED";
+              return (
               <article className="order-card" key={order.id}>
                 <div className="order-card-top">
                   <strong>#{order.orderCode}</strong>
                   <div className="order-card-badges">
                     <StatusBadge status={order.status} />
+                    {showCountdown && (
+                      <OrderCountdown
+                        createdAt={order.createdAt}
+                        windowMinutes={windowMinutes}
+                        onExpired={() =>
+                          setOrders((prev) =>
+                            prev.map((o) => o.id === order.id ? { ...o, status: "CANCELLED" } : o)
+                          )
+                        }
+                      />
+                    )}
                     {order.orderType === "delivery" ? <span className="delivery-tag">Delivery</span> : null}
                     {order.paymentMethod === "cash" ? <span className="cash-tag">Cash</span> : null}
                   </div>
@@ -2432,7 +2499,8 @@ function VendorConsole() {
                   </div>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </section>
 
           <section className="panel" id="shop-profile">
