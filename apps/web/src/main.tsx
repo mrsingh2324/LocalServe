@@ -53,6 +53,7 @@ import {
   updateOrderStatus,
   updateVendorProfile,
   uploadMenuItemPhoto,
+  uploadVendorBanner,
   verifyCustomerEmailOtp,
   verifyCustomerOtp,
   verifyVendor,
@@ -1558,6 +1559,59 @@ function OrderStatusPage() {
   );
 }
 
+// ── Banner Upload ─────────────────────────────────────────────────────────────
+
+function BannerUpload({ currentUrl, onUploaded }: { currentUrl?: string; onUploaded: (vendor: import("@localserve/shared-types").Vendor) => void }) {
+  const [uploading, setUploading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+    if (file.size > 4 * 1024 * 1024) { setError("Image must be under 4 MB."); return; }
+    setError("");
+    setUploading(true);
+    try {
+      const { vendor } = await uploadVendorBanner(file);
+      onUploaded(vendor);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="banner-upload-wrap">
+      <div
+        className={`banner-upload-target${uploading ? " uploading" : ""}`}
+        style={currentUrl ? { backgroundImage: `url(${currentUrl})` } : undefined}
+        onClick={() => !uploading && inputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+        aria-label="Upload shop banner"
+      >
+        {uploading ? (
+          <span className="banner-upload-label">Uploading…</span>
+        ) : currentUrl ? (
+          <span className="banner-upload-label banner-change-label">📷 Change photo</span>
+        ) : (
+          <div className="banner-upload-empty">
+            <span className="banner-upload-icon">🖼️</span>
+            <span className="banner-upload-label">Add shop banner</span>
+            <span className="banner-upload-hint">Click or drag & drop · JPG/PNG under 4 MB</span>
+          </div>
+        )}
+      </div>
+      <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }} />
+      {error ? <p className="field-error">{error}</p> : null}
+    </div>
+  );
+}
+
 // ── Vendor Console ────────────────────────────────────────────────────────────
 
 function VendorConsole() {
@@ -2089,6 +2143,16 @@ function VendorConsole() {
         </main>
       ) : (
         <main className="vendor-grid">
+          {!(vendor as { bannerUrl?: string }).bannerUrl ? (
+            <div className="setup-nudge">
+              <div className="setup-nudge-icon">🖼️</div>
+              <div>
+                <strong>Add a shop banner</strong>
+                <p>A banner makes your shop stand out on the home page. Takes 10 seconds.</p>
+              </div>
+              <button className="nudge-cta" onClick={() => goToPanel("shop-profile")}>Add photo →</button>
+            </div>
+          ) : null}
           <section className="panel vendor-action-panel">
             <p className="eyebrow">Quick actions</p>
             <div className="vendor-action-grid">
@@ -2139,7 +2203,12 @@ function VendorConsole() {
 
           <section className="panel" id="shop-profile">
             <h2>Shop profile</h2>
-            <form className="onboarding-form" onSubmit={updateProfile}>
+            <p className="muted small" style={{ marginBottom: 16 }}>Your banner appears on the home page and your storefront. Recommended: 1200×400 px.</p>
+            <BannerUpload
+              currentUrl={(vendor as { bannerUrl?: string }).bannerUrl}
+              onUploaded={(updated) => { setVendor(updated); }}
+            />
+            <form className="onboarding-form" style={{ marginTop: 20 }} onSubmit={updateProfile}>
               <label>
                 Shop name
                 <input value={profileDraft.name} onChange={(event) => setProfileDraft((draft) => ({ ...draft, name: event.target.value }))} />

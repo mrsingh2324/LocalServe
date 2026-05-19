@@ -1984,6 +1984,27 @@ app.post("/vendor/menu/:id/photo", requireVendor, upload.single("photo"), asyncH
   res.json({ menuItem: item });
 }));
 
+app.post("/vendor/banner", requireVendor, upload.single("banner"), asyncHandler(async (req, res) => {
+  const vendor = getAuthedVendor(req);
+  if (!vendor) { res.status(404).json({ error: "Vendor not found" }); return; }
+  if (!req.file) { res.status(400).json({ error: "Banner file is required" }); return; }
+  if (!s3Client || !storageBucket) {
+    res.status(503).json({ error: "Photo storage is not configured on this server." });
+    return;
+  }
+  const key = `vendors/${vendor.id}/banner/${crypto.randomUUID()}.${extensionForMimeType(req.file.mimetype)}`;
+  await s3Client.send(new PutObjectCommand({
+    Bucket: storageBucket,
+    Key: key,
+    Body: req.file.buffer,
+    ContentType: req.file.mimetype,
+    CacheControl: "public, max-age=31536000, immutable"
+  }));
+  vendor.bannerUrl = publicStorageUrl(key);
+  await persistState();
+  res.json({ vendor: await buildVendorResponse(vendor) });
+}));
+
 app.delete("/vendor/menu/:id", requireVendor, asyncHandler(async (req, res) => {
   const vendor = getAuthedVendor(req);
   const before = menuItems.length;

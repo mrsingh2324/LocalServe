@@ -365,6 +365,18 @@ export async function uploadMenuItemPhoto(id: string, file: File) {
   return response.json() as Promise<{ menuItem: MenuItem }>;
 }
 
+export async function uploadVendorBanner(file: File) {
+  const formData = new FormData();
+  formData.append("banner", file);
+  const response = await fetch(`${API_URL}/vendor/banner`, {
+    method: "POST",
+    headers: vendorAuthHeaders(),
+    body: formData
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ vendor: Vendor }>;
+}
+
 export function deleteMenuItem(id: string) {
   return request<void>(`/vendor/menu/${id}`, {
     method: "DELETE",
