@@ -453,8 +453,11 @@ function ensureDemoSeeds() {
     { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20, createdAt: "2022-03-15T09:00:00.000Z" }
   ];
   for (const seed of requiredVendors) {
-    if (!vendors.some((vendor) => vendor.id === seed.id || vendor.phone === seed.phone)) {
+    const existing = vendors.find((vendor) => vendor.id === seed.id || vendor.phone === seed.phone);
+    if (!existing) {
       vendors.push({ ...seed, qrUrl: "", storefrontUrl: `${publicAppUrl}/v/${seed.slug}`, passwordHash: demoPasswordHash });
+    } else if (!existing.createdAt) {
+      existing.createdAt = seed.createdAt;
     }
   }
 
