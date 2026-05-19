@@ -2099,6 +2099,19 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* ── Cash Payment Hint ────────────────────────────────────────────────────── */
+
+.cash-hint {
+  font-size: 13px;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
 /* ── Order Accept Countdown ───────────────────────────────────────────────── */
 
 .countdown {

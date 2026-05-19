@@ -1315,6 +1315,7 @@ function CustomerStorefront() {
       .then((data) => {
         setVendor(data.vendor as unknown as typeof vendor);
         setMenuItems(data.menuItems);
+        if (!(data.vendor.cashEnabled ?? true)) setPaymentMethod("online");
       })
       .catch((loadError) => setError(messageFromError(loadError)))
       .finally(() => setStorefrontLoading(false));
@@ -1334,6 +1335,7 @@ function CustomerStorefront() {
 
   const savedAddresses = customer?.addresses ?? [];
   const deliveryEnabled = (vendor as { deliveryEnabled?: boolean })?.deliveryEnabled ?? false;
+  const cashEnabled = (vendor as { cashEnabled?: boolean })?.cashEnabled ?? true;
 
   function getEffectiveAddress() {
     if (selectedSavedAddr) {
@@ -1554,22 +1556,27 @@ function CustomerStorefront() {
               </>
             ) : null}
 
-            <div className="payment-method-toggle">
-              <button
-                type="button"
-                className={paymentMethod === "online" ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => setPaymentMethod("online")}
-              >
-                Pay online
-              </button>
-              <button
-                type="button"
-                className={paymentMethod === "cash" ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => setPaymentMethod("cash")}
-              >
-                Cash {orderType === "delivery" ? "on delivery" : "on pickup"}
-              </button>
-            </div>
+            {cashEnabled ? (
+              <div className="payment-method-toggle">
+                <button
+                  type="button"
+                  className={paymentMethod === "online" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => setPaymentMethod("online")}
+                >
+                  Pay online
+                </button>
+                <button
+                  type="button"
+                  className={paymentMethod === "cash" ? "toggle-btn active" : "toggle-btn"}
+                  onClick={() => setPaymentMethod("cash")}
+                >
+                  Cash {orderType === "delivery" ? "on delivery" : "at counter"}
+                </button>
+              </div>
+            ) : null}
+            {paymentMethod === "cash" ? (
+              <p className="cash-hint">💵 You'll pay <strong>₹{total}</strong> {orderType === "delivery" ? "on delivery" : "at the counter"} when collecting your order.</p>
+            ) : null}
 
             {orderType === "delivery" && deliveryFee > 0 ? (
               <div className="cart-line fee-line">
@@ -1657,17 +1664,26 @@ function QuantityControl({ value, onChange }: { value: number; onChange: (quanti
 }
 
 function OrderConfirmation({ order, vendorName }: { order: Order; vendorName: string }) {
+  const isCash = order.paymentMethod === "cash";
   return (
     <section className="confirmation">
       <div className="success-mark">✓</div>
-      <p className="eyebrow">{order.paymentMethod === "cash" ? "Order placed" : "Payment confirmed"}</p>
+      <p className="eyebrow">{isCash ? "Order placed" : "Payment confirmed"}</p>
       <h2>Order confirmed</h2>
       <div className="order-code">{order.orderCode}</div>
-      <p>
-        {order.orderType === "delivery"
-          ? "Your order is on its way. Track live status below."
-          : "Your order is confirmed. Keep this code ready for pickup."}
-      </p>
+      {isCash ? (
+        <p>
+          Show this code at <strong>{vendorName}</strong> and pay{" "}
+          <strong>₹{order.totalAmount}</strong>{" "}
+          {order.orderType === "delivery" ? "on delivery" : "at the counter"}.
+        </p>
+      ) : (
+        <p>
+          {order.orderType === "delivery"
+            ? "Your order is on its way. Track live status below."
+            : "Your order is confirmed. Keep this code ready for pickup."}
+        </p>
+      )}
       <Link className="primary-link" to={`/order/${order.id}`}>Track live status</Link>
     </section>
   );
@@ -1923,6 +1939,7 @@ function VendorConsole() {
     isOpen: true,
     deliveryEnabled: false,
     deliveryFeeFlat: "0",
+    cashEnabled: true,
     operatingHours: defaultOperatingHours(),
     acceptWindowMinutes: "15"
   });
@@ -1981,6 +1998,7 @@ function VendorConsole() {
             isOpen: data.vendor.isOpen ?? true,
             deliveryEnabled: data.vendor.deliveryEnabled ?? false,
             deliveryFeeFlat: String(data.vendor.deliveryFeeFlat ?? 0),
+            cashEnabled: data.vendor.cashEnabled ?? true,
             operatingHours: data.vendor.operatingHours ?? defaultOperatingHours(),
             acceptWindowMinutes: String(data.vendor.acceptWindowMinutes ?? 15)
           }));
@@ -2173,6 +2191,7 @@ function VendorConsole() {
         isOpen: profileDraft.isOpen,
         deliveryEnabled: profileDraft.deliveryEnabled,
         deliveryFeeFlat: Number(profileDraft.deliveryFeeFlat),
+        cashEnabled: profileDraft.cashEnabled,
         operatingHours: profileDraft.operatingHours,
         acceptWindowMinutes: Number(profileDraft.acceptWindowMinutes)
       });
@@ -2546,6 +2565,10 @@ function VendorConsole() {
               <label className="checkbox-row">
                 <input type="checkbox" checked={profileDraft.deliveryEnabled} onChange={(e) => setProfileDraft((d) => ({ ...d, deliveryEnabled: e.target.checked }))} />
                 Offer delivery
+              </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={profileDraft.cashEnabled ?? true} onChange={(e) => setProfileDraft((d) => ({ ...d, cashEnabled: e.target.checked }))} />
+                Accept cash at counter
               </label>
               {profileDraft.deliveryEnabled ? (
                 <label>

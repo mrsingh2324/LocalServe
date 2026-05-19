@@ -87,6 +87,7 @@ export const vendorSchema = z.object({
   isOpen: z.boolean().default(true),
   deliveryEnabled: z.boolean().default(false),
   deliveryFeeFlat: z.number().default(0),
+  cashEnabled: z.boolean().default(true),
   bannerUrl: z.string().optional(),
   operatingHours: z.array(dayHoursSchema).length(7).optional(),
   acceptWindowMinutes: z.number().int().positive().optional(),

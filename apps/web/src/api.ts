@@ -76,7 +76,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getStorefront(slug: string) {
   return request<{
-    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[]; verified: boolean };
+    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; cashEnabled: boolean; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[]; verified: boolean };
     menuItems: MenuItem[]
   }>(`/v/${slug}`);
 }
@@ -185,6 +185,7 @@ export function updateVendorProfile(payload: {
   isOpen?: boolean;
   deliveryEnabled?: boolean;
   deliveryFeeFlat?: number;
+  cashEnabled?: boolean;
   bannerUrl?: string;
   operatingHours?: DayHours[];
   acceptWindowMinutes?: number;

@@ -330,6 +330,7 @@ const vendorProfileSchema = z.object({
   isOpen: z.boolean().optional(),
   deliveryEnabled: z.boolean().optional(),
   deliveryFeeFlat: z.number().nonnegative().optional(),
+  cashEnabled: z.boolean().optional(),
   bannerUrl: z.string().url().optional().or(z.literal("")),
   operatingHours: z.array(dayHoursBodySchema).length(7).optional(),
   acceptWindowMinutes: z.number().int().min(1).max(240).optional()
@@ -511,6 +512,7 @@ function publicStorefrontVendor(vendor: Vendor) {
     isOpen: isVendorOpenNow(vendor),
     deliveryEnabled: vendor.deliveryEnabled ?? false,
     deliveryFeeFlat: vendor.deliveryFeeFlat ?? 0,
+    cashEnabled: vendor.cashEnabled ?? true,
     bannerUrl: vendor.bannerUrl,
     operatingHours: vendor.operatingHours,
     verified: vendor.kyc?.status === "VERIFIED"
@@ -1086,7 +1088,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, email: vendor.email, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, email: vendor.email, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, cashEnabled: vendor.cashEnabled, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
         { upsert: true }
       );
     }
@@ -1389,6 +1391,7 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
     ...(body.isOpen !== undefined && { isOpen: body.isOpen }),
     ...(body.deliveryEnabled !== undefined && { deliveryEnabled: body.deliveryEnabled }),
     ...(body.deliveryFeeFlat !== undefined && { deliveryFeeFlat: body.deliveryFeeFlat }),
+    ...(body.cashEnabled !== undefined && { cashEnabled: body.cashEnabled }),
     ...(body.bannerUrl !== undefined && { bannerUrl: body.bannerUrl || undefined }),
     ...(body.operatingHours !== undefined && { operatingHours: body.operatingHours }),
     ...(body.acceptWindowMinutes !== undefined && { acceptWindowMinutes: body.acceptWindowMinutes })
@@ -1710,6 +1713,10 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
   }
   if (body.orderType === "delivery" && !vendor.deliveryEnabled) {
     res.status(400).json({ error: "This shop does not offer delivery" });
+    return;
+  }
+  if (body.paymentMethod === "cash" && !(vendor.cashEnabled ?? true)) {
+    res.status(400).json({ error: "This shop does not accept cash payments" });
     return;
   }
   if (body.orderType === "delivery" && !body.deliveryAddress) {
