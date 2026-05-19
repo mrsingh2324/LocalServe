@@ -261,6 +261,10 @@ const notifications = new Map<string, NotificationRecord>();
 const otpChallenges = new Map<string, { codeHash: string; expiresAt: number; attempts: number }>();
 
 const app = express();
+// Cloud Run terminates TLS at one proxy hop — trust it so req.ip is the real
+// client IP. Without this the rate limiter keys every user to the shared proxy
+// IP and they collectively exhaust one bucket.
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const corsAllowList = corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean);
 const allowAllCorsOrigins = corsAllowList.includes("*");
@@ -405,7 +409,7 @@ const pushSubscribeSchema = z.object({
   orderId: z.string().optional(),
   customerId: z.string().optional()
 });
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: process.env.NODE_ENV === "test" ? 1000 : 8, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: process.env.NODE_ENV === "test" ? 1000 : 30, standardHeaders: true, legacyHeaders: false });
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors(corsOptions));
