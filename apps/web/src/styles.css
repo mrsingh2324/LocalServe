@@ -2062,6 +2062,43 @@ textarea:focus {
   border-radius: var(--r-sm);
 }
 
+.reorder-btn {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: var(--r-full);
+  background: var(--c-purple-pale);
+  color: var(--c-purple-dark);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.reorder-btn:hover {
+  background: var(--c-purple);
+  color: #fff;
+}
+
+.reorder-btn:active {
+  transform: scale(0.94);
+}
+
+.reorder-toast {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--c-purple);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 22px;
+  border-radius: var(--r-full);
+  box-shadow: var(--shadow-lg);
+  z-index: 300;
+  animation: slide-up-in 0.2s ease both;
+  white-space: nowrap;
+}
+
 /* ── Storefront Extras ────────────────────────────────────────────────────── */
 
 .hero-delivery-note {

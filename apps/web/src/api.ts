@@ -256,7 +256,7 @@ export function deleteCustomerAddress(id: string) {
 }
 
 export function getCustomerOrders() {
-  return request<{ orders: (Order & { vendorName: string })[] }>("/customer/orders", {
+  return request<{ orders: (Order & { vendorName: string; vendorSlug: string })[] }>("/customer/orders", {
     headers: customerAuthHeaders()
   });
 }

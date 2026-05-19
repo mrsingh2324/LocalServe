@@ -877,9 +877,11 @@ function CustomerLoginPage() {
 function CustomerOrdersPage() {
   const { customer } = useCustomer();
   const navigate = useNavigate();
-  const [orders, setOrders] = React.useState<(Order & { vendorName: string })[]>([]);
+  const { setQuantity, clear } = useCartStore();
+  const [orders, setOrders] = React.useState<(Order & { vendorName: string; vendorSlug: string })[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
+  const [reorderToast, setReorderToast] = React.useState("");
 
   React.useEffect(() => {
     if (!customer) {
@@ -901,6 +903,16 @@ function CustomerOrdersPage() {
     }
   }
 
+  function handleReorder(order: Order & { vendorSlug: string; vendorName: string }) {
+    clear();
+    for (const item of order.items) {
+      setQuantity(item.menuItemId, item.quantity);
+    }
+    setReorderToast(`${order.items.length} item${order.items.length !== 1 ? "s" : ""} added — check availability`);
+    setTimeout(() => setReorderToast(""), 3500);
+    navigate(`/v/${order.vendorSlug}`);
+  }
+
   return (
     <Shell>
       <section className="hero vendor-hero">
@@ -909,6 +921,11 @@ function CustomerOrdersPage() {
           <h1>My Orders</h1>
         </div>
       </section>
+      {reorderToast ? (
+        <div className="reorder-toast">
+          🛒 {reorderToast}
+        </div>
+      ) : null}
       <main className="orders-page">
         <ErrorBanner message={error} onDismiss={() => setError("")} />
         {loading ? (
@@ -929,7 +946,7 @@ function CustomerOrdersPage() {
                   </div>
                   <StatusBadge status={order.status} />
                 </div>
-                <p className="order-items-list">{order.items.map((i) => `${i.name} x${i.quantity}`).join(", ")}</p>
+                <p className="order-items-list">{order.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</p>
                 <div className="order-history-bottom">
                   <div>
                     <span className="muted">{new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>
@@ -937,6 +954,11 @@ function CustomerOrdersPage() {
                   </div>
                   <div className="button-row">
                     <strong>₹{order.totalAmount}</strong>
+                    {order.status === "COLLECTED" && order.vendorSlug ? (
+                      <button className="reorder-btn" onClick={() => handleReorder(order)}>
+                        🔁 Reorder
+                      </button>
+                    ) : null}
                     <Link to={`/order/${order.id}`} className="small-link">Track</Link>
                     {["PENDING", "CONFIRMED"].includes(order.status) ? (
                       <button className="danger-button small-btn" onClick={() => handleCancel(order.id)}>Cancel</button>

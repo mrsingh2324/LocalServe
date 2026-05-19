@@ -1660,7 +1660,7 @@ app.get("/customer/orders", requireCustomer, asyncHandler(async (req, res) => {
   }
   const customerOrderList = customerOrders(customerId).map((order) => {
     const vendor = getVendorById(order.vendorId);
-    return { ...order, vendorName: vendor?.name ?? "Shop" };
+    return { ...order, vendorName: vendor?.name ?? "Shop", vendorSlug: vendor?.slug ?? "" };
   });
   res.json({ orders: customerOrderList });
 }));
