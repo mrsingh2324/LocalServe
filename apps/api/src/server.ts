@@ -186,7 +186,10 @@ let vendors: StoredVendor[] = [
     category: "Food & Snacks",
     isOpen: true,
     deliveryEnabled: false,
-    deliveryFeeFlat: 0
+    deliveryFeeFlat: 0,
+    cashEnabled: true,
+    ratingSum: 0,
+    ratingCount: 0
   },
   {
     id: "vendor_meera",
@@ -201,7 +204,10 @@ let vendors: StoredVendor[] = [
     category: "Tea & Coffee",
     isOpen: true,
     deliveryEnabled: true,
-    deliveryFeeFlat: 20
+    deliveryFeeFlat: 20,
+    cashEnabled: true,
+    ratingSum: 0,
+    ratingCount: 0
   }
 ];
 
@@ -464,7 +470,7 @@ function ensureDemoSeeds() {
   for (const seed of requiredVendors) {
     const existing = vendors.find((vendor) => vendor.id === seed.id || vendor.phone === seed.phone);
     if (!existing) {
-      vendors.push({ ...seed, qrUrl: "", storefrontUrl: `${publicAppUrl}/v/${seed.slug}`, passwordHash: demoPasswordHash });
+      vendors.push({ ...seed, qrUrl: "", storefrontUrl: `${publicAppUrl}/v/${seed.slug}`, passwordHash: demoPasswordHash, cashEnabled: true, ratingSum: 0, ratingCount: 0 });
     } else if (!existing.createdAt) {
       existing.createdAt = seed.createdAt;
     }
@@ -971,6 +977,9 @@ async function loadState() {
         bannerUrl: (vendor as unknown as { bannerUrl?: string }).bannerUrl,
         operatingHours: (vendor as unknown as { operatingHours?: DayHours[] }).operatingHours,
         acceptWindowMinutes: (vendor as unknown as { acceptWindowMinutes?: number }).acceptWindowMinutes ?? 15,
+        cashEnabled: (vendor as unknown as { cashEnabled?: boolean }).cashEnabled ?? true,
+        ratingSum: (vendor as unknown as { ratingSum?: number }).ratingSum ?? 0,
+        ratingCount: (vendor as unknown as { ratingCount?: number }).ratingCount ?? 0,
         kyc: (vendor as unknown as { kyc?: Kyc }).kyc
       }));
       menuItems = dbMenuItems.map((item) => ({
@@ -1302,6 +1311,9 @@ app.post("/vendor/register/email", authLimiter, asyncHandler(async (req, res) =>
     isOpen: true,
     deliveryEnabled: false,
     deliveryFeeFlat: 0,
+    cashEnabled: true,
+    ratingSum: 0,
+    ratingCount: 0,
     createdAt: new Date().toISOString()
   };
   vendors.push(vendor);
@@ -1355,6 +1367,9 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     isOpen: true,
     deliveryEnabled: false,
     deliveryFeeFlat: 0,
+    cashEnabled: true,
+    ratingSum: 0,
+    ratingCount: 0,
     createdAt: new Date().toISOString()
   };
   vendors.push(vendor);
@@ -2150,8 +2165,8 @@ export async function initialize() {
 
 export function resetLocalState() {
   vendors = [
-    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/ravi-canteen`, passwordHash: demoPasswordHash, category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0 },
-    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/meera-tea-point`, passwordHash: demoPasswordHash, category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20 }
+    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/ravi-canteen`, passwordHash: demoPasswordHash, category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0, cashEnabled: true, ratingSum: 0, ratingCount: 0 },
+    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", qrUrl: "", storefrontUrl: `${publicAppUrl}/v/meera-tea-point`, passwordHash: demoPasswordHash, category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20, cashEnabled: true, ratingSum: 0, ratingCount: 0 }
   ];
   menuItems = menuItems.filter(() => false);
   menuItems.push(
