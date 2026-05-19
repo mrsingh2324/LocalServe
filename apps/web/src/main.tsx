@@ -202,6 +202,19 @@ async function enablePushForOrder(orderId: string, customerId?: string) {
   });
 }
 
+// ── Trust Signal Helpers ──────────────────────────────────────────────────────
+
+function formatOrderCount(n: number): string {
+  if (n <= 0) return "";
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(".0", "")}k+`;
+  if (n >= 100) return `${Math.floor(n / 100) * 100}+`;
+  return String(n);
+}
+
+function sinceYear(iso: string): number {
+  return new Date(iso).getFullYear();
+}
+
 // ── Skeleton Components ───────────────────────────────────────────────────────
 
 function ShopCardSkeleton() {
@@ -497,7 +510,22 @@ function HomePage() {
                       {shop.verified ? <span className="verified-tick" title="Verified shop">✓</span> : null}
                     </h3>
                     <p className="shop-location">{shop.locationTag}</p>
-                    <div className="shop-meta">
+                    {(shop.orderCount > 0 || shop.createdAt) ? (
+                      <div className="shop-trust-row">
+                        {shop.orderCount > 0 ? (
+                          <span className="trust-pill trust-pill-orders">
+                            🛒 {formatOrderCount(shop.orderCount)} orders
+                          </span>
+                        ) : null}
+                        {shop.orderCount > 0 && shop.createdAt ? <span className="trust-dot" /> : null}
+                        {shop.createdAt ? (
+                          <span className="trust-pill trust-pill-since">
+                            Since {sinceYear(shop.createdAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="shop-meta" style={{ marginTop: 8 }}>
                       {shop.deliveryEnabled ? (
                         <span className="delivery-badge">Delivery ₹{shop.deliveryFeeFlat}</span>
                       ) : (

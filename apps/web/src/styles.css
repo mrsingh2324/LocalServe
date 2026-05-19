@@ -1504,6 +1504,63 @@ textarea:focus {
   font-size: 11px;
 }
 
+/* ── Shop Trust Signals ───────────────────────────────────────────────────── */
+
+.shop-trust-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.trust-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.trust-pill-orders {
+  color: var(--c-green-mid);
+}
+
+.trust-pill-since {
+  color: var(--text-faint);
+}
+
+.trust-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.verified-tick {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--c-green);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.hero-tick {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+}
+
 /* ── Auth Page ────────────────────────────────────────────────────────────── */
 
 .auth-page {
@@ -1824,27 +1881,7 @@ textarea:focus {
   font-weight: 800;
 }
 
-/* ── Verified Badge ───────────────────────────────────────────────────────── */
-
-.verified-tick {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--c-green);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  vertical-align: middle;
-}
-
-.hero-tick {
-  width: 30px;
-  height: 30px;
-  font-size: 18px;
-}
+/* verified-tick and hero-tick defined in Shop Trust Signals section above */
 
 /* ── KYC Panel ────────────────────────────────────────────────────────────── */
 

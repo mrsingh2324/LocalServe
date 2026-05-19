@@ -33,7 +33,7 @@ import {
 } from "./models.js";
 import type { Address, Customer, DayHours, DeliveryAddress, Kyc, MenuItem, Order, OrderLine, OrderStatus, Vendor } from "@localserve/shared-types";
 
-type StoredVendor = Vendor & { passwordHash: string };
+type StoredVendor = Vendor & { passwordHash: string; createdAt?: string };
 type StoredCustomer = Customer & { passwordHash?: string };
 type StoredPushSubscription = {
   id: string;
@@ -449,8 +449,8 @@ function getCustomerById(id: string) {
 
 function ensureDemoSeeds() {
   const requiredVendors = [
-    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0 },
-    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20 }
+    { id: "vendor_ravi", name: "Ravi's Canteen", slug: "ravi-canteen", locationTag: "Office Block B, Ground Floor", phone: "+919876543210", upiId: "ravi@upi", category: "Food & Snacks", isOpen: true, deliveryEnabled: false, deliveryFeeFlat: 0, createdAt: "2021-06-01T09:00:00.000Z" },
+    { id: "vendor_meera", name: "Meera Tea Point", slug: "meera-tea-point", locationTag: "Tower A Lobby", phone: "+919812345670", upiId: "meera@upi", category: "Tea & Coffee", isOpen: true, deliveryEnabled: true, deliveryFeeFlat: 20, createdAt: "2022-03-15T09:00:00.000Z" }
   ];
   for (const seed of requiredVendors) {
     if (!vendors.some((vendor) => vendor.id === seed.id || vendor.phone === seed.phone)) {
@@ -1152,7 +1152,9 @@ app.get("/shops", asyncHandler(async (req, res) => {
     deliveryFeeFlat: v.deliveryFeeFlat ?? 0,
     storefrontUrl: `${publicAppUrl}/v/${v.slug}`,
     bannerUrl: v.bannerUrl,
-    verified: v.kyc?.status === "VERIFIED"
+    verified: v.kyc?.status === "VERIFIED",
+    orderCount: [...orders.values()].filter((o) => o.vendorId === v.id && o.status === "COLLECTED").length,
+    createdAt: v.createdAt ?? new Date().toISOString()
   }));
 
   res.json({ shops: shopList, total: shopList.length });
@@ -1276,7 +1278,8 @@ app.post("/vendor/register", authLimiter, asyncHandler(async (req, res) => {
     category: "General Store",
     isOpen: true,
     deliveryEnabled: false,
-    deliveryFeeFlat: 0
+    deliveryFeeFlat: 0,
+    createdAt: new Date().toISOString()
   };
   vendors.push(vendor);
   await persistState();
