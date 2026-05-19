@@ -76,7 +76,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getStorefront(slug: string) {
   return request<{
-    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[]; verified: boolean };
+    vendor: PublicVendor & { deliveryEnabled: boolean; deliveryFeeFlat: number; cashEnabled: boolean; isOpen: boolean; category: string; bannerUrl?: string; operatingHours?: DayHours[]; verified: boolean; ratingAvg: number | null; ratingCount: number };
     menuItems: MenuItem[]
   }>(`/v/${slug}`);
 }
@@ -97,6 +97,8 @@ export type ShopSummary = {
   verified: boolean;
   orderCount: number;
   createdAt: string;
+  ratingAvg: number | null;
+  ratingCount: number;
 };
 
 export function getShops(params?: { category?: string; q?: string; deliveryOnly?: boolean }) {
@@ -185,6 +187,7 @@ export function updateVendorProfile(payload: {
   isOpen?: boolean;
   deliveryEnabled?: boolean;
   deliveryFeeFlat?: number;
+  cashEnabled?: boolean;
   bannerUrl?: string;
   operatingHours?: DayHours[];
   acceptWindowMinutes?: number;
@@ -461,6 +464,14 @@ export function getAdminOrders() {
 }
 
 // ── Web Push ──────────────────────────────────────────────────────────────────
+
+export function rateOrder(id: string, stars: number) {
+  return request<{ order: Order }>(`/orders/${id}/rate`, {
+    method: "POST",
+    headers: customerAuthHeaders(),
+    body: JSON.stringify({ stars })
+  });
+}
 
 export function getVapidPublicKey() {
   return request<{ key: string | null }>("/push/vapid-public-key");

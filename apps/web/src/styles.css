@@ -2099,6 +2099,253 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* ── Star Rating ──────────────────────────────────────────────────────────── */
+
+.star-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 4px;
+}
+
+.star-rating-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--border);
+  cursor: pointer;
+  padding: 2px;
+  transition: color 0.1s, transform 0.1s;
+}
+
+.star-btn:hover,
+.star-btn.lit {
+  color: #f59e0b;
+}
+
+.star-btn:active {
+  transform: scale(1.2);
+}
+
+.star-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rated-line {
+  font-size: 14px;
+  padding: 4px 0;
+  color: #f59e0b;
+  letter-spacing: 2px;
+}
+
+.rated-line .muted {
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.trust-pill-rating {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.hero-rating {
+  font-size: 14px;
+  font-weight: 600;
+  color: #92400e;
+  margin-top: 4px !important;
+}
+
+.hero-rating-count {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ── Cash Payment Hint ────────────────────────────────────────────────────── */
+
+.cash-hint {
+  font-size: 13px;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ── Order Accept Countdown ───────────────────────────────────────────────── */
+
+.countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #22a559;
+  background: #e6f9ee;
+  border-radius: var(--r-full);
+  padding: 3px 9px 3px 6px;
+  line-height: 1;
+  transition: background 0.3s, color 0.3s;
+}
+
+.countdown.warning {
+  color: #b45309;
+  background: #fff7ed;
+}
+
+.countdown.urgent {
+  color: #dc2626;
+  background: #fef2f2;
+  animation: pulse-dot 1s ease infinite;
+}
+
+.countdown.expired {
+  color: var(--muted);
+  background: var(--bg-card);
+}
+
+.countdown-ring {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+  flex-shrink: 0;
+}
+
+.countdown-ring circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  opacity: 0.25;
+}
+
+.countdown-ring .countdown-ring-fill {
+  opacity: 1;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
+/* ── Menu Category Tabs ───────────────────────────────────────────────────── */
+
+.menu-cat-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 0 12px;
+  margin-bottom: 4px;
+  scroll-snap-type: x mandatory;
+}
+
+.menu-cat-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.menu-cat-tab {
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.menu-cat-tab:hover {
+  border-color: var(--c-purple);
+  color: var(--c-purple);
+}
+
+.menu-cat-tab.active {
+  background: var(--c-purple);
+  border-color: var(--c-purple);
+  color: #fff;
+}
+
+.menu-cat-section {
+  margin-bottom: 32px;
+}
+
+.menu-cat-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 12px;
+  padding-top: 8px;
+  scroll-margin-top: 64px;
+}
+
+/* ── Customer Profile Page ────────────────────────────────────────────────── */
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.panel-header h2 {
+  margin: 0;
+}
+
+.profile-info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-info-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-info-row:last-child {
+  border-bottom: none;
+}
+
+.profile-info-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 60px;
+}
+
+.success-banner {
+  background: #e6f9f0;
+  color: #157347;
+  border: 1px solid #b7e5cc;
+  border-radius: var(--r-md);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
 /* ── Storefront Extras ────────────────────────────────────────────────────── */
 
 .hero-delivery-note {

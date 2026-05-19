@@ -330,6 +330,7 @@ const vendorProfileSchema = z.object({
   isOpen: z.boolean().optional(),
   deliveryEnabled: z.boolean().optional(),
   deliveryFeeFlat: z.number().nonnegative().optional(),
+  cashEnabled: z.boolean().optional(),
   bannerUrl: z.string().url().optional().or(z.literal("")),
   operatingHours: z.array(dayHoursBodySchema).length(7).optional(),
   acceptWindowMinutes: z.number().int().min(1).max(240).optional()
@@ -511,9 +512,12 @@ function publicStorefrontVendor(vendor: Vendor) {
     isOpen: isVendorOpenNow(vendor),
     deliveryEnabled: vendor.deliveryEnabled ?? false,
     deliveryFeeFlat: vendor.deliveryFeeFlat ?? 0,
+    cashEnabled: vendor.cashEnabled ?? true,
     bannerUrl: vendor.bannerUrl,
     operatingHours: vendor.operatingHours,
-    verified: vendor.kyc?.status === "VERIFIED"
+    verified: vendor.kyc?.status === "VERIFIED",
+    ratingAvg: vendor.ratingCount ? Math.round((vendor.ratingSum / vendor.ratingCount) * 10) / 10 : null,
+    ratingCount: vendor.ratingCount ?? 0
   };
 }
 
@@ -1086,7 +1090,7 @@ async function persistState() {
     for (const vendor of vendors) {
       await VendorModel.updateOne(
         { _id: vendor.id },
-        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, email: vendor.email, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, kyc: vendor.kyc } },
+        { $set: { name: vendor.name, slug: vendor.slug, phone: vendor.phone, email: vendor.email, locationTag: vendor.locationTag, upiId: vendor.upiId, qrUrl: vendor.qrUrl, passwordHash: vendor.passwordHash, category: vendor.category, isOpen: vendor.isOpen, deliveryEnabled: vendor.deliveryEnabled, deliveryFeeFlat: vendor.deliveryFeeFlat, cashEnabled: vendor.cashEnabled, bannerUrl: vendor.bannerUrl, operatingHours: vendor.operatingHours, acceptWindowMinutes: vendor.acceptWindowMinutes, ratingSum: vendor.ratingSum, ratingCount: vendor.ratingCount, kyc: vendor.kyc } },
         { upsert: true }
       );
     }
@@ -1165,7 +1169,9 @@ app.get("/shops", asyncHandler(async (req, res) => {
     bannerUrl: v.bannerUrl,
     verified: v.kyc?.status === "VERIFIED",
     orderCount: [...orders.values()].filter((o) => o.vendorId === v.id && o.status === "COLLECTED").length,
-    createdAt: v.createdAt ?? new Date().toISOString()
+    createdAt: v.createdAt ?? new Date().toISOString(),
+    ratingAvg: v.ratingCount ? Math.round((v.ratingSum / v.ratingCount) * 10) / 10 : null,
+    ratingCount: v.ratingCount ?? 0
   }));
 
   res.json({ shops: shopList, total: shopList.length });
@@ -1389,6 +1395,7 @@ app.patch("/vendor/profile", requireVendor, asyncHandler(async (req, res) => {
     ...(body.isOpen !== undefined && { isOpen: body.isOpen }),
     ...(body.deliveryEnabled !== undefined && { deliveryEnabled: body.deliveryEnabled }),
     ...(body.deliveryFeeFlat !== undefined && { deliveryFeeFlat: body.deliveryFeeFlat }),
+    ...(body.cashEnabled !== undefined && { cashEnabled: body.cashEnabled }),
     ...(body.bannerUrl !== undefined && { bannerUrl: body.bannerUrl || undefined }),
     ...(body.operatingHours !== undefined && { operatingHours: body.operatingHours }),
     ...(body.acceptWindowMinutes !== undefined && { acceptWindowMinutes: body.acceptWindowMinutes })
@@ -1712,6 +1719,10 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
     res.status(400).json({ error: "This shop does not offer delivery" });
     return;
   }
+  if (body.paymentMethod === "cash" && !(vendor.cashEnabled ?? true)) {
+    res.status(400).json({ error: "This shop does not accept cash payments" });
+    return;
+  }
   if (body.orderType === "delivery" && !body.deliveryAddress) {
     res.status(400).json({ error: "Delivery address is required for delivery orders" });
     return;
@@ -1859,6 +1870,33 @@ app.get("/orders/:id", (req, res) => {
   }
   res.json({ order, vendor: { name: vendor.name, locationTag: vendor.locationTag } });
 });
+
+app.post("/orders/:id/rate", requireCustomer, asyncHandler(async (req, res) => {
+  const { stars } = z.object({ stars: z.number().int().min(1).max(5) }).parse(req.body);
+  const customerId = getAuthedCustomerId(req)!;
+  const order = orders.get(req.params.id);
+  if (!order || order.customerId !== customerId) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (order.status !== "COLLECTED") {
+    res.status(400).json({ error: "Only collected orders can be rated" });
+    return;
+  }
+  if (order.rating) {
+    res.status(400).json({ error: "Order already rated" });
+    return;
+  }
+  const rated: Order = { ...order, rating: stars };
+  orders.set(order.id, rated);
+  const vendor = getVendorById(order.vendorId);
+  if (vendor) {
+    vendor.ratingSum = (vendor.ratingSum ?? 0) + stars;
+    vendor.ratingCount = (vendor.ratingCount ?? 0) + 1;
+  }
+  await persistState();
+  res.json({ order: rated });
+}));
 
 app.patch("/orders/:id/status", requireVendor, asyncHandler(async (req, res) => {
   const vendor = getAuthedVendor(req);

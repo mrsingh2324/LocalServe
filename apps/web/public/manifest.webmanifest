@@ -1,9 +1,25 @@
 {
-  "name": "LocalServe",
-  "short_name": "LocalServe",
-  "start_url": "/v/ravi-canteen",
+  "name": "QuickOrder",
+  "short_name": "QuickOrder",
+  "description": "Scan, order and skip the queue at your local shop.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f7f5f0",
   "theme_color": "#3c3489",
-  "description": "QR ordering for hyperlocal food vendors."
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }

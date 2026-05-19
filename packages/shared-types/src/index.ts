@@ -87,9 +87,12 @@ export const vendorSchema = z.object({
   isOpen: z.boolean().default(true),
   deliveryEnabled: z.boolean().default(false),
   deliveryFeeFlat: z.number().default(0),
+  cashEnabled: z.boolean().default(true),
   bannerUrl: z.string().optional(),
   operatingHours: z.array(dayHoursSchema).length(7).optional(),
   acceptWindowMinutes: z.number().int().positive().optional(),
+  ratingSum: z.number().default(0),
+  ratingCount: z.number().int().default(0),
   kyc: kycSchema.optional(),
 });
 
@@ -124,7 +127,8 @@ export const orderSchema = z.object({
   paymentId: z.string().optional(),
   paymentOrderId: z.string().optional(),
   createdAt: z.string(),
-  readyAt: z.string().optional()
+  readyAt: z.string().optional(),
+  rating: z.number().int().min(1).max(5).optional()
 });
 
 export type Address = z.infer<typeof addressSchema>;
