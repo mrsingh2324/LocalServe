@@ -202,6 +202,43 @@ async function enablePushForOrder(orderId: string, customerId?: string) {
   });
 }
 
+// ── Skeleton Components ───────────────────────────────────────────────────────
+
+function ShopCardSkeleton() {
+  return (
+    <div className="shop-card-skel" aria-hidden="true">
+      <div className="skeleton skel-banner" />
+      <div className="skel-body">
+        <div className="skel-row">
+          <div className="skeleton skel-line skel-sm" />
+          <div className="skeleton skel-badge" />
+        </div>
+        <div className="skeleton skel-title skel-xl" />
+        <div className="skeleton skel-line skel-md" />
+        <div className="skeleton skel-badge" style={{ width: 100 }} />
+      </div>
+    </div>
+  );
+}
+
+function MenuCardSkeleton() {
+  return (
+    <div className="menu-card-skel" aria-hidden="true">
+      <div className="skeleton skel-img-43" />
+      <div className="skel-menu-body">
+        <div className="skeleton skel-line skel-xs" />
+        <div className="skeleton skel-title skel-lg" />
+        <div className="skeleton skel-line skel-full" />
+        <div className="skeleton skel-line skel-xl" />
+        <div className="skel-action-row">
+          <div className="skeleton skel-line skel-sm" />
+          <div className="skeleton skel-qty" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
   if (!message) return null;
   return (
@@ -428,9 +465,8 @@ function HomePage() {
         <ErrorBanner message={error} onDismiss={() => setError("")} />
 
         {loading ? (
-          <div className="empty">
-            <div className="empty-icon">🔍</div>
-            <p className="empty-title">Finding shops near you…</p>
+          <div className="shops-grid" aria-label="Loading shops…">
+            {Array.from({ length: 6 }).map((_, i) => <ShopCardSkeleton key={i} />)}
           </div>
         ) : shops.length === 0 ? (
           <div className="empty">
@@ -774,6 +810,7 @@ function CustomerStorefront() {
   const { customer } = useCustomer();
   const [vendor, setVendor] = React.useState<(ShopSummary & { qrUrl?: string; storefrontUrl?: string }) | null>(null);
   const [menuItems, setMenuItems] = React.useState<MenuItem[]>([]);
+  const [storefrontLoading, setStorefrontLoading] = React.useState(true);
   const [email, setEmail] = React.useState(customer?.email ?? "");
   const [phone, setPhone] = React.useState(customer?.phone ?? "");
   const [orderType, setOrderType] = React.useState<"pickup" | "delivery">("pickup");
@@ -792,12 +829,14 @@ function CustomerStorefront() {
   React.useEffect(() => {
     if (!slug) return;
     setError("");
+    setStorefrontLoading(true);
     getStorefront(slug)
       .then((data) => {
         setVendor(data.vendor as unknown as typeof vendor);
         setMenuItems(data.menuItems);
       })
-      .catch((loadError) => setError(messageFromError(loadError)));
+      .catch((loadError) => setError(messageFromError(loadError)))
+      .finally(() => setStorefrontLoading(false));
   }, [slug]);
 
   React.useEffect(() => {
@@ -887,7 +926,26 @@ function CustomerStorefront() {
     }
   }
 
-  if (!vendor) return <Shell hideVendorNav><div className="empty">{error || "Loading storefront..."}</div></Shell>;
+  if (storefrontLoading) return (
+    <Shell hideVendorNav>
+      <div className="skeleton" style={{ width: "100%", minHeight: 200, borderRadius: 0 }} aria-hidden="true" />
+      <main className="customer-grid">
+        <section>
+          <div className="menu-grid" aria-label="Loading menu…">
+            {Array.from({ length: 8 }).map((_, i) => <MenuCardSkeleton key={i} />)}
+          </div>
+        </section>
+        <aside className="cart-panel" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="skeleton skel-title" style={{ width: "60%", marginBottom: 8 }} aria-hidden="true" />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="skeleton skel-line skel-full" style={{ height: 14 }} aria-hidden="true" />
+          ))}
+        </aside>
+      </main>
+    </Shell>
+  );
+
+  if (!vendor) return <Shell hideVendorNav><div className="empty"><div className="empty-icon">⚠️</div><p className="empty-title">{error || "Shop not found"}</p></div></Shell>;
 
   return (
     <Shell hideVendorNav>
