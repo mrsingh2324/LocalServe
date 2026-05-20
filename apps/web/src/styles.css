@@ -2386,6 +2386,94 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* ── Favorites + Recent Rails ─────────────────────────────────────────────── */
+
+.shop-fav {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s, color 0.15s, background 0.15s;
+  z-index: 2;
+}
+
+.shop-fav:hover:not(:disabled) {
+  background: #fff;
+  color: var(--c-red);
+  transform: scale(1.08);
+}
+
+.shop-fav.active {
+  color: var(--c-red);
+  background: #fff;
+}
+
+.shop-fav:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+/* Shop card needs to position the heart over the banner */
+.shop-card {
+  position: relative;
+}
+
+.shop-rail {
+  margin-bottom: 24px;
+}
+
+.shop-rail-h {
+  font-size: var(--fs-h3);
+  font-weight: 800;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shop-rail-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 8px;
+  margin: 0 calc(-1 * clamp(16px, 4vw, 56px));
+  padding-left: clamp(16px, 4vw, 56px);
+  padding-right: clamp(16px, 4vw, 56px);
+}
+
+.shop-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.shop-rail-scroll {
+  scrollbar-width: none;
+}
+
+.shop-rail-scroll > .shop-card {
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  width: 280px;
+}
+
+@media (max-width: 600px) {
+  .shop-rail-scroll > .shop-card {
+    width: 240px;
+  }
+}
+
 /* ── Vendor Option Editor (variants + add-ons) ────────────────────────────── */
 
 .option-editor {

@@ -41,6 +41,7 @@ export const customerSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional(),
   addresses: z.array(addressSchema).default([]),
+  favoriteVendorIds: z.array(z.string()).default([]),
   createdAt: z.string(),
 });
 

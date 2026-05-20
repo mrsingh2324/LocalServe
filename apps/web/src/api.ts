@@ -251,6 +251,20 @@ export function addCustomerAddress(payload: { label: string; line1: string; city
   });
 }
 
+export function addFavoriteVendor(vendorId: string) {
+  return request<{ customer: Customer }>(`/customer/favorites/${vendorId}`, {
+    method: "POST",
+    headers: customerAuthHeaders()
+  });
+}
+
+export function removeFavoriteVendor(vendorId: string) {
+  return request<{ customer: Customer }>(`/customer/favorites/${vendorId}`, {
+    method: "DELETE",
+    headers: customerAuthHeaders()
+  });
+}
+
 export function deleteCustomerAddress(id: string) {
   return request<void>(`/customer/addresses/${id}`, {
     method: "DELETE",

@@ -1078,7 +1078,7 @@ async function loadState() {
       customers = dbCustomers.map((c) => {
         const cust = c as unknown as {
           _id: unknown; name: string; phone: string; email?: string;
-          addresses?: Address[]; createdAt: Date;
+          addresses?: Address[]; favoriteVendorIds?: string[]; createdAt: Date;
         };
         return {
           id: String(cust._id),
@@ -1086,6 +1086,7 @@ async function loadState() {
           phone: cust.phone,
           email: cust.email,
           addresses: cust.addresses ?? [],
+          favoriteVendorIds: cust.favoriteVendorIds ?? [],
           createdAt: cust.createdAt.toISOString()
         };
       });
@@ -1157,7 +1158,7 @@ async function persistState() {
     for (const customer of customers) {
       await CustomerModel.updateOne(
         { _id: customer.id },
-        { $set: { name: customer.name, phone: customer.phone, email: customer.email, addresses: customer.addresses } },
+        { $set: { name: customer.name, phone: customer.phone, email: customer.email, addresses: customer.addresses, favoriteVendorIds: customer.favoriteVendorIds } },
         { upsert: true }
       );
     }
@@ -1592,6 +1593,7 @@ app.post("/auth/customer/otp/verify", authLimiter, asyncHandler(async (req, res)
       phone: body.phone,
       email: body.email,
       addresses: [],
+      favoriteVendorIds: [],
       createdAt: new Date().toISOString()
     };
     customers.push(customer);
@@ -1633,6 +1635,7 @@ app.post("/auth/customer/email/otp/verify", authLimiter, asyncHandler(async (req
       name: body.name ?? "Customer",
       email,
       addresses: [],
+      favoriteVendorIds: [],
       createdAt: new Date().toISOString()
     };
     customers.push(customer);
@@ -1693,6 +1696,27 @@ app.delete("/customer/addresses/:id", requireCustomer, asyncHandler(async (req, 
   customer.addresses = (customer.addresses ?? []).filter((a) => a.id !== req.params.id);
   await persistState();
   res.status(204).send();
+}));
+
+app.post("/customer/favorites/:vendorId", requireCustomer, asyncHandler(async (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) { res.status(404).json({ error: "Customer not found" }); return; }
+  const vendor = getVendorById(req.params.vendorId);
+  if (!vendor) { res.status(404).json({ error: "Shop not found" }); return; }
+  const current = customer.favoriteVendorIds ?? [];
+  if (!current.includes(vendor.id)) customer.favoriteVendorIds = [...current, vendor.id];
+  await persistState();
+  res.json({ customer: publicCustomer(customer) });
+}));
+
+app.delete("/customer/favorites/:vendorId", requireCustomer, asyncHandler(async (req, res) => {
+  const customerId = getAuthedCustomerId(req);
+  const customer = customerId ? getCustomerById(customerId) : undefined;
+  if (!customer) { res.status(404).json({ error: "Customer not found" }); return; }
+  customer.favoriteVendorIds = (customer.favoriteVendorIds ?? []).filter((id) => id !== req.params.vendorId);
+  await persistState();
+  res.json({ customer: publicCustomer(customer) });
 }));
 
 app.get("/customer/orders", requireCustomer, asyncHandler(async (req, res) => {

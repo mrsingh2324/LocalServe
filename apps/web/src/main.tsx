@@ -9,6 +9,8 @@ import {
   type AdminVendor,
   type ShopSummary,
   addCustomerAddress,
+  addFavoriteVendor,
+  removeFavoriteVendor,
   adminLogin,
   cancelOrder,
   rateOrder,
@@ -484,6 +486,25 @@ function Shell({ children, hideVendorNav = false }: { children: React.ReactNode;
 // ── Shop Card + Grid ──────────────────────────────────────────────────────────
 
 function ShopCard({ shop }: { shop: ShopSummary }) {
+  const { customer, setCustomer } = useCustomer();
+  const isFavorite = (customer?.favoriteVendorIds ?? []).includes(shop.id);
+  const [pending, setPending] = React.useState(false);
+
+  async function toggleFavorite(event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!customer || pending) return;
+    setPending(true);
+    try {
+      const res = isFavorite
+        ? await removeFavoriteVendor(shop.id)
+        : await addFavoriteVendor(shop.id);
+      setCustomer(res.customer);
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <Link to={`/v/${shop.slug}`} className="shop-card">
       {shop.bannerUrl ? (
@@ -491,6 +512,18 @@ function ShopCard({ shop }: { shop: ShopSummary }) {
       ) : (
         <div className="shop-banner-placeholder">{CATEGORY_EMOJIS[shop.category ?? "Other"] ?? "🏪"}</div>
       )}
+      {customer ? (
+        <button
+          type="button"
+          className={`shop-fav${isFavorite ? " active" : ""}`}
+          aria-label={isFavorite ? "Remove from saved" : "Save shop"}
+          aria-pressed={isFavorite}
+          disabled={pending}
+          onClick={toggleFavorite}
+        >
+          {isFavorite ? "♥" : "♡"}
+        </button>
+      ) : null}
       <div className="shop-card-body">
         <div className="shop-card-top">
           <span className="shop-category">{shop.category}</span>
@@ -592,8 +625,10 @@ function highlight(text: string, query: string): React.ReactNode {
 
 function HomePage() {
   const navigate = useNavigate();
+  const { customer } = useCustomer();
   const [allShops, setAllShops] = React.useState<ShopSummary[]>([]);
   const [shops, setShops] = React.useState<ShopSummary[]>([]);
+  const [recentSlugs, setRecentSlugs] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [activeCategory, setActiveCategory] = React.useState("All");
@@ -611,6 +646,25 @@ function HomePage() {
       .then((data) => setAllShops(data.shops))
       .catch(() => {});
   }, []);
+
+  // Recent shops: unique vendor slugs from customer's order history, newest first.
+  React.useEffect(() => {
+    if (!customer) { setRecentSlugs([]); return; }
+    getCustomerOrders()
+      .then(({ orders }) => {
+        const seen = new Set<string>();
+        const slugs: string[] = [];
+        for (const o of orders) {
+          if (o.vendorSlug && !seen.has(o.vendorSlug)) {
+            seen.add(o.vendorSlug);
+            slugs.push(o.vendorSlug);
+            if (slugs.length >= 5) break;
+          }
+        }
+        setRecentSlugs(slugs);
+      })
+      .catch(() => {});
+  }, [customer?.id]);
 
   // Initial + category/delivery filter fetch
   React.useEffect(() => {
@@ -816,6 +870,37 @@ function HomePage() {
         </div>
 
         <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+        {(() => {
+          const defaultView = !search.trim() && activeCategory === "All" && !deliveryOnly;
+          if (!defaultView || !customer) return null;
+          const favShops = (customer.favoriteVendorIds ?? [])
+            .map((id) => allShops.find((s) => s.id === id))
+            .filter((s): s is ShopSummary => Boolean(s));
+          const recentShops = recentSlugs
+            .map((slug) => allShops.find((s) => s.slug === slug))
+            .filter((s): s is ShopSummary => Boolean(s));
+          return (
+            <>
+              {favShops.length > 0 ? (
+                <section className="shop-rail">
+                  <h2 className="shop-rail-h">♥ Saved shops</h2>
+                  <div className="shop-rail-scroll">
+                    {favShops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+                  </div>
+                </section>
+              ) : null}
+              {recentShops.length > 0 ? (
+                <section className="shop-rail">
+                  <h2 className="shop-rail-h">🕘 Order again</h2>
+                  <div className="shop-rail-scroll">
+                    {recentShops.map((shop) => <ShopCard key={shop.id} shop={shop} />)}
+                  </div>
+                </section>
+              ) : null}
+            </>
+          );
+        })()}
 
         {loading ? (
           <div className="shops-grid" aria-label="Loading shops…">
