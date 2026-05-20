@@ -2386,6 +2386,108 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* ── Low Stock Widget ─────────────────────────────────────────────────────── */
+
+.low-stock-clear {
+  margin: 0;
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+.low-stock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.low-stock-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+}
+
+.low-stock-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.low-stock-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.low-stock-info strong {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-pill {
+  align-self: flex-start;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.stock-pill.out {
+  color: var(--c-red);
+  background: var(--c-red-pale);
+  border-color: #fecaca;
+}
+
+.low-stock-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.restock-chip {
+  min-height: 36px;
+  min-width: 44px;
+  padding: 0 10px;
+  background: var(--c-purple-pale);
+  color: var(--c-purple-dark);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.restock-chip:hover:not(:disabled) {
+  background: var(--c-purple);
+  color: #fff;
+}
+
+@media (max-width: 600px) {
+  .low-stock-actions {
+    gap: 4px;
+  }
+  .restock-chip {
+    min-width: 40px;
+    padding: 0 8px;
+    font-size: var(--fs-xs);
+  }
+}
+
 /* ── Cash Payment Hint ────────────────────────────────────────────────────── */
 
 .cash-hint {

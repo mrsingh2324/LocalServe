@@ -2051,6 +2051,89 @@ function OrderCountdown({
   );
 }
 
+// ── Low Stock Widget ──────────────────────────────────────────────────────────
+
+const LOW_STOCK_THRESHOLD = 5;
+
+function LowStockWidget({
+  menu,
+  setMenu,
+  onError,
+}: {
+  menu: MenuItem[];
+  setMenu: React.Dispatch<React.SetStateAction<MenuItem[]>>;
+  onError: (msg: string) => void;
+}) {
+  const trackedItems = menu.filter((item) => typeof item.stockQuantity === "number");
+  if (trackedItems.length === 0) return null;
+
+  const lowItems = trackedItems
+    .filter((item) => (item.stockQuantity ?? 0) <= LOW_STOCK_THRESHOLD)
+    .sort((a, b) => (a.stockQuantity ?? 0) - (b.stockQuantity ?? 0));
+
+  const [pendingId, setPendingId] = React.useState<string>("");
+
+  async function bump(item: MenuItem, by: number) {
+    if (pendingId) return;
+    const current = item.stockQuantity ?? 0;
+    const next = current + by;
+    setPendingId(item.id);
+    setMenu((prev) => prev.map((m) => m.id === item.id ? { ...m, stockQuantity: next } : m));
+    try {
+      const res = await updateMenuItem(item.id, { stockQuantity: next });
+      setMenu((prev) => prev.map((m) => m.id === item.id ? res.menuItem : m));
+    } catch (err) {
+      setMenu((prev) => prev.map((m) => m.id === item.id ? { ...m, stockQuantity: current } : m));
+      onError(messageFromError(err));
+    } finally {
+      setPendingId("");
+    }
+  }
+
+  return (
+    <section className="panel low-stock-widget">
+      <div className="section-head">
+        <h2>Low stock</h2>
+        <span>{lowItems.length} item{lowItems.length !== 1 ? "s" : ""}</span>
+      </div>
+      {lowItems.length === 0 ? (
+        <p className="muted small low-stock-clear">✓ All tracked items are well-stocked.</p>
+      ) : (
+        <div className="low-stock-list">
+          {lowItems.map((item) => {
+            const qty = item.stockQuantity ?? 0;
+            const out = qty === 0;
+            return (
+              <div className="low-stock-row" key={item.id}>
+                <img className="low-stock-thumb" src={item.photoUrl} alt="" />
+                <div className="low-stock-info">
+                  <strong>{item.name}</strong>
+                  <span className={`stock-pill${out ? " out" : ""}`}>
+                    {out ? "Out of stock" : `${qty} left`}
+                  </span>
+                </div>
+                <div className="low-stock-actions">
+                  {[5, 10, 25].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className="restock-chip"
+                      disabled={pendingId === item.id}
+                      onClick={() => bump(item, n)}
+                    >
+                      +{n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Vendor Console ────────────────────────────────────────────────────────────
 
 function VendorConsole() {
@@ -2604,6 +2687,8 @@ function VendorConsole() {
               <button className="large-action" onClick={() => goToPanel("shop-profile")}>Edit shop info</button>
             </div>
           </section>
+
+          <LowStockWidget menu={menu} setMenu={setMenu} onError={setError} />
 
           <section className="panel queue-panel" id="live-queue">
             <div className="section-head">
