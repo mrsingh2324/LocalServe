@@ -393,6 +393,19 @@ export function getDashboard() {
   });
 }
 
+export type VendorAnalytics = {
+  summary: { totalOrders: number; totalRevenue: number; avgOrderValue: number; uniqueCustomers: number };
+  topItems: { menuItemId: string; name: string; quantitySold: number; revenue: number }[];
+  dailyRevenue: { date: string; orders: number; revenue: number }[];
+  hourlyOrders: number[];
+};
+
+export function getVendorAnalytics() {
+  return request<VendorAnalytics>("/vendor/analytics", {
+    headers: vendorAuthHeaders()
+  });
+}
+
 // ── Vendor KYC ────────────────────────────────────────────────────────────────
 
 export function submitVendorKyc(payload: { ownerName: string; gstin?: string }) {

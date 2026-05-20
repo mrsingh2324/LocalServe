@@ -33,6 +33,8 @@ import {
   getStoredVendorToken,
   getStorefront,
   getVapidPublicKey,
+  getVendorAnalytics,
+  type VendorAnalytics,
   getVendorMe,
   getVendorMenu,
   getVendorOrders,
@@ -2051,6 +2053,99 @@ function OrderCountdown({
   );
 }
 
+// ── Vendor Analytics Panel ────────────────────────────────────────────────────
+
+function VendorAnalyticsPanel({ analytics }: { analytics: VendorAnalytics | null }) {
+  if (!analytics) return null;
+  const { summary, topItems, dailyRevenue, hourlyOrders } = analytics;
+
+  if (summary.totalOrders === 0) {
+    return (
+      <section className="panel analytics-panel" id="analytics">
+        <div className="section-head">
+          <h2>Analytics</h2>
+        </div>
+        <p className="muted small">Insights will appear here once you have collected orders.</p>
+      </section>
+    );
+  }
+
+  const maxDailyRevenue = Math.max(1, ...dailyRevenue.map((d) => d.revenue));
+  const maxHourly = Math.max(1, ...hourlyOrders);
+  const maxItemQty = Math.max(1, ...topItems.map((i) => i.quantitySold));
+
+  return (
+    <section className="panel analytics-panel" id="analytics">
+      <div className="section-head">
+        <h2>Analytics</h2>
+        <span>Lifetime · IST</span>
+      </div>
+
+      <div className="analytics-stats">
+        <div><span>Revenue</span><strong>₹{summary.totalRevenue}</strong></div>
+        <div><span>Orders</span><strong>{summary.totalOrders}</strong></div>
+        <div><span>Avg order</span><strong>₹{summary.avgOrderValue}</strong></div>
+        <div><span>Customers</span><strong>{summary.uniqueCustomers}</strong></div>
+      </div>
+
+      {topItems.length > 0 ? (
+        <div className="analytics-block">
+          <h3 className="analytics-h">Top sellers</h3>
+          <div className="top-items">
+            {topItems.map((item, i) => (
+              <div className="top-item" key={item.menuItemId}>
+                <span className="top-item-rank">#{i + 1}</span>
+                <div className="top-item-info">
+                  <strong>{item.name}</strong>
+                  <span className="muted small">{item.quantitySold} sold · ₹{item.revenue}</span>
+                </div>
+                <div className="top-item-bar-wrap">
+                  <div className="top-item-bar" style={{ width: `${(item.quantitySold / maxItemQty) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="analytics-block">
+        <h3 className="analytics-h">Revenue · last 14 days</h3>
+        <div className="bar-chart">
+          {dailyRevenue.map((d) => {
+            const heightPct = (d.revenue / maxDailyRevenue) * 100;
+            const dt = new Date(`${d.date}T00:00:00+05:30`);
+            return (
+              <div className="bar-col" key={d.date} title={`${dt.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} — ₹${d.revenue} · ${d.orders} orders`}>
+                <div className="bar-wrap">
+                  <div className="bar bar-revenue" style={{ height: `${heightPct}%` }} />
+                </div>
+                <span className="bar-label">{dt.getDate()}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="analytics-block">
+        <h3 className="analytics-h">Peak hours</h3>
+        <div className="bar-chart">
+          {hourlyOrders.map((count, h) => {
+            const heightPct = (count / maxHourly) * 100;
+            return (
+              <div className="bar-col" key={h} title={`${h}:00 — ${count} order${count !== 1 ? "s" : ""}`}>
+                <div className="bar-wrap">
+                  <div className="bar bar-hour" style={{ height: `${heightPct}%` }} />
+                </div>
+                <span className="bar-label">{h % 6 === 0 ? `${h}h` : ""}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ── Low Stock Widget ──────────────────────────────────────────────────────────
 
 const LOW_STOCK_THRESHOLD = 5;
@@ -2142,6 +2237,7 @@ function VendorConsole() {
   const [vendor, setVendor] = React.useState<Vendor | null>(null);
   const [demoVendors, setDemoVendors] = React.useState<Vendor[]>([]);
   const [summary, setSummary] = React.useState({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
+  const [analytics, setAnalytics] = React.useState<VendorAnalytics | null>(null);
   const [authMode, setAuthMode] = React.useState<"entry" | "login" | "signup">("entry");
   const [loginDraft, setLoginDraft] = React.useState({ phone: "", email: "", otpCode: "" });
   const [loginMethod, setLoginMethod] = React.useState<"phone" | "email">("phone");
@@ -2187,16 +2283,18 @@ function VendorConsole() {
 
   const refresh = React.useCallback(async () => {
     if (!getStoredVendorToken()) return;
-    const [orderData, menuData, qrData, dashboard] = await Promise.all([
+    const [orderData, menuData, qrData, dashboard, analyticsData] = await Promise.all([
       getVendorOrders(),
       getVendorMenu(),
       getVendorQr(),
-      getDashboard()
+      getDashboard(),
+      getVendorAnalytics()
     ]);
     setOrders(orderData.orders);
     setMenu(menuData.menuItems);
     setVendor(qrData.vendor);
     setSummary({ totalOrders: dashboard.totalOrders, revenue: dashboard.revenue, pendingSettlement: dashboard.pendingSettlement });
+    setAnalytics(analyticsData);
   }, []);
 
   React.useEffect(() => {
@@ -2426,6 +2524,7 @@ function VendorConsole() {
     setOrders([]);
     setMenu([]);
     setSummary({ totalOrders: 0, revenue: 0, pendingSettlement: 0 });
+    setAnalytics(null);
     setIssuedToken("");
     setLoginOtpSent(false);
     setRegisterOtpSent(false);
@@ -2863,6 +2962,8 @@ function VendorConsole() {
           </section>
 
           {vendor ? <VendorKycPanel vendor={vendor} onUpdated={setVendor} /> : null}
+
+          <VendorAnalyticsPanel analytics={analytics} />
 
           <section className="panel" id="shop-summary">
             <h2>Today&apos;s summary</h2>

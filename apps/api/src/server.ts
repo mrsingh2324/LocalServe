@@ -790,6 +790,13 @@ function istNow() {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 }
 
+// Returns the IST calendar date (YYYY-MM-DD) and hour (0-23) for an ISO string.
+function istDateParts(iso: string) {
+  const utc = new Date(iso).getTime();
+  const ist = new Date(utc + 5.5 * 60 * 60 * 1000);
+  return { date: ist.toISOString().slice(0, 10), hour: ist.getUTCHours() };
+}
+
 function isVendorOpenNow(vendor: Pick<Vendor, "isOpen" | "operatingHours">) {
   if (!vendor.isOpen) return false;
   const hours = vendor.operatingHours;
@@ -2090,6 +2097,62 @@ app.get("/vendor/dashboard", requireVendor, asyncHandler(async (req, res) => {
     .filter((order) => ["CONFIRMED", "PREPARING", "READY"].includes(order.status))
     .reduce((sum, order) => sum + order.totalAmount, 0);
   res.json({ totalOrders: allOrders.length, revenue, pendingSettlement, recentOrders: allOrders.slice(0, 5) });
+}));
+
+app.get("/vendor/analytics", requireVendor, asyncHandler(async (req, res) => {
+  const vendor = getAuthedVendor(req);
+  if (!vendor) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const orders = vendorOrders(vendor.id).filter((o) => o.status === "COLLECTED");
+
+  const totalOrders = orders.length;
+  const totalRevenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
+  const avgOrderValue = totalOrders ? Math.round(totalRevenue / totalOrders) : 0;
+  const uniqueCustomers = new Set(orders.map((o) => o.customerId || o.customerEmail)).size;
+
+  const itemAgg = new Map<string, { name: string; quantitySold: number; revenue: number }>();
+  for (const order of orders) {
+    for (const line of order.items) {
+      const cur = itemAgg.get(line.menuItemId) ?? { name: line.name, quantitySold: 0, revenue: 0 };
+      cur.quantitySold += line.quantity;
+      cur.revenue += line.lineTotal;
+      itemAgg.set(line.menuItemId, cur);
+    }
+  }
+  const topItems = [...itemAgg.entries()]
+    .map(([menuItemId, v]) => ({ menuItemId, ...v }))
+    .sort((a, b) => b.quantitySold - a.quantitySold)
+    .slice(0, 5);
+
+  // Last 14 IST days, oldest first. Initialize so days with zero orders still appear.
+  const daily: Record<string, { orders: number; revenue: number }> = {};
+  const todayUtcMs = Date.now();
+  for (let i = 13; i >= 0; i--) {
+    const ist = new Date(todayUtcMs - i * 24 * 60 * 60 * 1000 + 5.5 * 60 * 60 * 1000);
+    daily[ist.toISOString().slice(0, 10)] = { orders: 0, revenue: 0 };
+  }
+  for (const order of orders) {
+    const { date } = istDateParts(order.createdAt);
+    if (daily[date]) {
+      daily[date].orders += 1;
+      daily[date].revenue += order.totalAmount;
+    }
+  }
+  const dailyRevenue = Object.entries(daily)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, v]) => ({ date, ...v }));
+
+  const hourlyOrders = new Array(24).fill(0);
+  for (const order of orders) {
+    const { hour } = istDateParts(order.createdAt);
+    hourlyOrders[hour] += 1;
+  }
+
+  res.json({
+    summary: { totalOrders, totalRevenue, avgOrderValue, uniqueCustomers },
+    topItems,
+    dailyRevenue,
+    hourlyOrders
+  });
 }));
 
 app.get("/vendor/notifications", requireVendor, (req, res) => {
