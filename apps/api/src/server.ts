@@ -220,7 +220,9 @@ let menuItems: MenuItem[] = [
     price: 45,
     photoUrl: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=800&q=80",
     category: "Snacks",
-    isAvailable: true
+    isAvailable: true,
+    variants: [],
+    addons: []
   },
   {
     id: "mi_paneer_roll",
@@ -230,7 +232,9 @@ let menuItems: MenuItem[] = [
     price: 60,
     photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80",
     category: "Rolls",
-    isAvailable: true
+    isAvailable: true,
+    variants: [],
+    addons: []
   },
   {
     id: "mi_chai",
@@ -240,7 +244,9 @@ let menuItems: MenuItem[] = [
     price: 20,
     photoUrl: "https://images.unsplash.com/photo-1561336526-2914f13ceb36?auto=format&fit=crop&w=800&q=80",
     category: "Tea",
-    isAvailable: true
+    isAvailable: true,
+    variants: [],
+    addons: []
   },
   {
     id: "mi_samosa",
@@ -250,7 +256,9 @@ let menuItems: MenuItem[] = [
     price: 25,
     photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80",
     category: "Snacks",
-    isAvailable: true
+    isAvailable: true,
+    variants: [],
+    addons: []
   }
 ];
 
@@ -299,7 +307,16 @@ const createOrderBodySchema = z.object({
   }).optional(),
   paymentMethod: z.enum(["online", "cash"]).default("online"),
   scheduledFor: z.string().datetime().optional(),
-  items: z.array(z.object({ menuItemId: z.string(), quantity: z.number().int().positive() })).min(1)
+  items: z.array(z.object({
+    menuItemId: z.string(),
+    quantity: z.number().int().positive(),
+    variantId: z.string().optional(),
+    addonIds: z.array(z.string()).optional()
+  })).min(1)
+});
+const menuOptionBodySchema = z.object({
+  name: z.string().min(1).max(30),
+  price: z.number().nonnegative()
 });
 const menuItemBodySchema = z.object({
   name: z.string().min(1).max(60),
@@ -308,7 +325,9 @@ const menuItemBodySchema = z.object({
   photoUrl: z.string().url(),
   category: z.string().min(1),
   isAvailable: z.boolean().default(true),
-  stockQuantity: z.number().int().nonnegative().optional()
+  stockQuantity: z.number().int().nonnegative().optional(),
+  variants: z.array(menuOptionBodySchema).max(10).optional(),
+  addons: z.array(menuOptionBodySchema).max(10).optional()
 });
 const dayHoursBodySchema = z.object({
   closed: z.boolean(),
@@ -482,10 +501,10 @@ function ensureDemoSeeds() {
   }
 
   const requiredItems: MenuItem[] = [
-    { id: "mi_veg_sandwich", vendorId: "vendor_ravi", name: "Veg Sandwich", description: "Grilled vegetables, chutney, and soft bread.", price: 45, photoUrl: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true },
-    { id: "mi_paneer_roll", vendorId: "vendor_ravi", name: "Paneer Roll", description: "Spiced paneer wrapped in a warm paratha.", price: 60, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Rolls", isAvailable: true },
-    { id: "mi_chai", vendorId: "vendor_meera", name: "Masala Chai", description: "Fresh ginger-cardamom tea served hot.", price: 20, photoUrl: "https://images.unsplash.com/photo-1561336526-2914f13ceb36?auto=format&fit=crop&w=800&q=80", category: "Tea", isAvailable: true },
-    { id: "mi_samosa", vendorId: "vendor_meera", name: "Samosa", description: "Crisp potato samosa with green chutney.", price: 25, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true }
+    { id: "mi_veg_sandwich", vendorId: "vendor_ravi", name: "Veg Sandwich", description: "Grilled vegetables, chutney, and soft bread.", price: 45, photoUrl: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_paneer_roll", vendorId: "vendor_ravi", name: "Paneer Roll", description: "Spiced paneer wrapped in a warm paratha.", price: 60, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Rolls", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_chai", vendorId: "vendor_meera", name: "Masala Chai", description: "Fresh ginger-cardamom tea served hot.", price: 20, photoUrl: "https://images.unsplash.com/photo-1561336526-2914f13ceb36?auto=format&fit=crop&w=800&q=80", category: "Tea", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_samosa", vendorId: "vendor_meera", name: "Samosa", description: "Crisp potato samosa with green chutney.", price: 25, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true, variants: [], addons: [] }
   ];
   for (const seed of requiredItems) {
     if (!menuItems.some((item) => item.id === seed.id)) menuItems.push(seed);
@@ -1001,7 +1020,9 @@ async function loadState() {
         photoUrl: item.photoUrl,
         category: item.category,
         isAvailable: item.isAvailable,
-        stockQuantity: (item as unknown as { stockQuantity?: number }).stockQuantity
+        stockQuantity: (item as unknown as { stockQuantity?: number }).stockQuantity,
+        variants: (item as unknown as { variants?: { id: string; name: string; price: number }[] }).variants ?? [],
+        addons: (item as unknown as { addons?: { id: string; name: string; price: number }[] }).addons ?? []
       }));
       orders.clear();
       for (const order of dbOrders) {
@@ -1754,7 +1775,32 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
     if (typeof menuItem.stockQuantity === "number" && menuItem.stockQuantity < cartItem.quantity) {
       throw Object.assign(new Error(menuItem.stockQuantity === 0 ? `${menuItem.name} is out of stock` : `Only ${menuItem.stockQuantity} ${menuItem.name} left in stock`), { status: 400 });
     }
-    return { menuItemId: menuItem.id, name: menuItem.name, quantity: cartItem.quantity, unitPrice: menuItem.price, lineTotal: menuItem.price * cartItem.quantity };
+    const variants = menuItem.variants ?? [];
+    const addons = menuItem.addons ?? [];
+    let variant: { id: string; name: string; price: number } | undefined;
+    if (cartItem.variantId) {
+      variant = variants.find((v) => v.id === cartItem.variantId);
+      if (!variant) throw Object.assign(new Error(`Variant unavailable for ${menuItem.name}`), { status: 400 });
+    } else if (variants.length > 0) {
+      throw Object.assign(new Error(`Please choose an option for ${menuItem.name}`), { status: 400 });
+    }
+    const chosenAddons: { id: string; name: string; price: number }[] = [];
+    for (const id of cartItem.addonIds ?? []) {
+      const found = addons.find((a) => a.id === id);
+      if (!found) throw Object.assign(new Error(`Add-on unavailable for ${menuItem.name}`), { status: 400 });
+      chosenAddons.push(found);
+    }
+    const base = variant ? variant.price : menuItem.price;
+    const unitPrice = base + chosenAddons.reduce((sum, a) => sum + a.price, 0);
+    return {
+      menuItemId: menuItem.id,
+      name: menuItem.name,
+      quantity: cartItem.quantity,
+      unitPrice,
+      lineTotal: unitPrice * cartItem.quantity,
+      ...(variant ? { variantId: variant.id, variantName: variant.name } : {}),
+      ...(chosenAddons.length ? { addonIds: chosenAddons.map((a) => a.id), addonNames: chosenAddons.map((a) => a.name) } : {})
+    };
   });
 
   const itemsTotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
@@ -1972,7 +2018,9 @@ app.get("/vendor/orders/:id/receipt.pdf", requireVendor, (req, res) => {
   doc.moveDown();
   doc.fillColor("#111").fontSize(12);
   for (const item of order.items) {
-    doc.text(`${item.name} x${item.quantity}`, { continued: true });
+    const opts = [item.variantName, ...(item.addonNames ?? [])].filter(Boolean).join(", ");
+    const label = `${item.name}${opts ? ` (${opts})` : ""} x${item.quantity}`;
+    doc.text(label, { continued: true });
     doc.text(`Rs. ${item.lineTotal}`, { align: "right" });
   }
   if (order.deliveryFee) {
@@ -2003,7 +2051,12 @@ app.post("/vendor/menu", requireVendor, asyncHandler(async (req, res) => {
     return;
   }
   const body = menuItemBodySchema.parse(req.body);
-  const item: MenuItem = { id: crypto.randomUUID(), vendorId: vendor.id, ...body };
+  const withIds = {
+    ...body,
+    variants: (body.variants ?? []).map((v) => ({ ...v, id: crypto.randomUUID() })),
+    addons: (body.addons ?? []).map((a) => ({ ...a, id: crypto.randomUUID() }))
+  };
+  const item: MenuItem = { id: crypto.randomUUID(), vendorId: vendor.id, ...withIds };
   menuItems = [item, ...menuItems];
   await persistState();
   res.status(201).json({ menuItem: item });
@@ -2017,7 +2070,12 @@ app.patch("/vendor/menu/:id", requireVendor, asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Menu item not found" });
     return;
   }
-  Object.assign(item, body);
+  const patch = {
+    ...body,
+    ...(body.variants !== undefined ? { variants: body.variants.map((v) => ({ ...v, id: crypto.randomUUID() })) } : {}),
+    ...(body.addons !== undefined ? { addons: body.addons.map((a) => ({ ...a, id: crypto.randomUUID() })) } : {})
+  };
+  Object.assign(item, patch);
   await persistState();
   res.json({ menuItem: item });
 }));
@@ -2228,10 +2286,10 @@ export function resetLocalState() {
   ];
   menuItems = menuItems.filter(() => false);
   menuItems.push(
-    { id: "mi_veg_sandwich", vendorId: "vendor_ravi", name: "Veg Sandwich", description: "Grilled vegetables, chutney, and soft bread.", price: 45, photoUrl: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true },
-    { id: "mi_paneer_roll", vendorId: "vendor_ravi", name: "Paneer Roll", description: "Spiced paneer wrapped in a warm paratha.", price: 60, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Rolls", isAvailable: true },
-    { id: "mi_chai", vendorId: "vendor_meera", name: "Masala Chai", description: "Fresh ginger-cardamom tea served hot.", price: 20, photoUrl: "https://images.unsplash.com/photo-1561336526-2914f13ceb36?auto=format&fit=crop&w=800&q=80", category: "Tea", isAvailable: true },
-    { id: "mi_samosa", vendorId: "vendor_meera", name: "Samosa", description: "Crisp potato samosa with green chutney.", price: 25, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true }
+    { id: "mi_veg_sandwich", vendorId: "vendor_ravi", name: "Veg Sandwich", description: "Grilled vegetables, chutney, and soft bread.", price: 45, photoUrl: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_paneer_roll", vendorId: "vendor_ravi", name: "Paneer Roll", description: "Spiced paneer wrapped in a warm paratha.", price: 60, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Rolls", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_chai", vendorId: "vendor_meera", name: "Masala Chai", description: "Fresh ginger-cardamom tea served hot.", price: 20, photoUrl: "https://images.unsplash.com/photo-1561336526-2914f13ceb36?auto=format&fit=crop&w=800&q=80", category: "Tea", isAvailable: true, variants: [], addons: [] },
+    { id: "mi_samosa", vendorId: "vendor_meera", name: "Samosa", description: "Crisp potato samosa with green chutney.", price: 25, photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80", category: "Snacks", isAvailable: true, variants: [], addons: [] }
   );
   orders.clear();
   notifications.clear();

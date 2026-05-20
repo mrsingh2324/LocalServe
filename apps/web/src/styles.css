@@ -2386,6 +2386,208 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* ── Vendor Option Editor (variants + add-ons) ────────────────────────────── */
+
+.option-editor {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  margin: 8px 0;
+  background: var(--bg);
+}
+
+.option-editor legend {
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.option-row {
+  display: grid;
+  grid-template-columns: 1fr 100px 36px;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.option-row input {
+  min-height: 38px;
+  padding: 6px 10px;
+}
+
+.option-remove {
+  min-height: 38px;
+  min-width: 36px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.option-remove:hover:not(:disabled) {
+  background: var(--c-red-pale);
+  color: var(--c-red);
+  border-color: var(--c-red-pale);
+}
+
+.option-add {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ── Item Variants & Add-ons (customization sheet) ────────────────────────── */
+
+.customize-hint {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--c-purple-dark);
+  background: var(--c-purple-pale);
+  border-radius: var(--r-full);
+  padding: 2px 9px;
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
+
+/* The customize sheet reuses .cart-panel mobile bottom-sheet styles, with
+   responsive overrides so desktop also shows it as a centered modal. */
+.customize-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (min-width: 901px) {
+  .customize-sheet {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    bottom: auto;
+    right: auto;
+    transform: translate(-50%, -50%);
+    width: min(420px, 92vw);
+    max-height: 80vh;
+    overflow-y: auto;
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-lg);
+    padding: 0 20px 24px;
+    z-index: 250;
+  }
+  .customize-sheet .cart-sheet-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0 -20px 8px;
+    padding: 12px 0 6px;
+  }
+  .customize-sheet .cart-sheet-grip {
+    display: none;
+  }
+  .customize-sheet .cart-sheet-close {
+    position: absolute;
+    right: 14px;
+    top: 12px;
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+  }
+}
+
+.customize-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.customize-group-h {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 4px;
+}
+
+.customize-option {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.customize-option:hover {
+  border-color: var(--c-purple-pale);
+}
+
+.customize-option.selected {
+  border-color: var(--c-purple);
+  background: var(--c-purple-bg);
+}
+
+.customize-option input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  accent-color: var(--c-purple);
+  margin: 0;
+}
+
+.customize-option-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.customize-option-price {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--c-purple-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.customize-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 8px;
+}
+
+.customize-add {
+  flex: 1;
+  min-height: 48px;
+  font-weight: 800;
+  font-size: var(--fs-body);
+}
+
+.cart-line-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cart-line-name {
+  font-weight: 600;
+}
+
+.cart-line-options {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
 /* ── Scheduled Pickup ─────────────────────────────────────────────────────── */
 
 .pickup-time-label select {

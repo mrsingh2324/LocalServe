@@ -275,7 +275,7 @@ export function createOrder(payload: {
   deliveryAddress?: { line1: string; city: string; pincode: string };
   paymentMethod: "online" | "cash";
   scheduledFor?: string;
-  items: { menuItemId: string; quantity: number }[];
+  items: { menuItemId: string; quantity: number; variantId?: string; addonIds?: string[] }[];
 }) {
   return request<{
     order: Order;
@@ -341,7 +341,7 @@ export function getVendorMenu() {
   });
 }
 
-export function createMenuItem(payload: Omit<MenuItem, "id" | "vendorId">) {
+export function createMenuItem(payload: Partial<Omit<MenuItem, "id" | "vendorId">> & Pick<MenuItem, "name" | "description" | "price" | "photoUrl" | "category" | "isAvailable">) {
   return request<{ menuItem: MenuItem }>("/vendor/menu", {
     method: "POST",
     headers: vendorAuthHeaders(),

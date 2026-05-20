@@ -44,6 +44,18 @@ export const customerSchema = z.object({
   createdAt: z.string(),
 });
 
+export const menuVariantSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(30),
+  price: z.number().nonnegative()
+});
+
+export const menuAddonSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(30),
+  price: z.number().nonnegative()
+});
+
 export const menuItemSchema = z.object({
   id: z.string(),
   vendorId: z.string(),
@@ -53,7 +65,9 @@ export const menuItemSchema = z.object({
   photoUrl: z.string().url(),
   category: z.string(),
   isAvailable: z.boolean(),
-  stockQuantity: z.number().int().nonnegative().optional()
+  stockQuantity: z.number().int().nonnegative().optional(),
+  variants: z.array(menuVariantSchema).default([]),
+  addons: z.array(menuAddonSchema).default([])
 });
 
 export const dayHoursSchema = z.object({
@@ -107,7 +121,11 @@ export const orderLineSchema = z.object({
   name: z.string(),
   quantity: z.number().int().positive(),
   unitPrice: z.number().nonnegative(),
-  lineTotal: z.number().nonnegative()
+  lineTotal: z.number().nonnegative(),
+  variantId: z.string().optional(),
+  variantName: z.string().optional(),
+  addonIds: z.array(z.string()).optional(),
+  addonNames: z.array(z.string()).optional()
 });
 
 export const orderSchema = z.object({
@@ -138,6 +156,8 @@ export type DayHours = z.infer<typeof dayHoursSchema>;
 export type Kyc = z.infer<typeof kycSchema>;
 export type KycStatus = (typeof kycStatuses)[number];
 export type Customer = z.infer<typeof customerSchema>;
+export type MenuVariant = z.infer<typeof menuVariantSchema>;
+export type MenuAddon = z.infer<typeof menuAddonSchema>;
 export type MenuItem = z.infer<typeof menuItemSchema>;
 export type Vendor = z.infer<typeof vendorSchema>;
 export type PublicVendor = z.infer<typeof publicVendorSchema>;

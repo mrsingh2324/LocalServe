@@ -174,6 +174,16 @@ function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
+function formatOrderLine(line: {
+  name: string;
+  quantity: number;
+  variantName?: string;
+  addonNames?: string[];
+}) {
+  const opts = [line.variantName, ...(line.addonNames ?? [])].filter(Boolean).join(", ");
+  return `${line.name}${opts ? ` (${opts})` : ""} ×${line.quantity}`;
+}
+
 function formatScheduledFor(iso: string) {
   const d = new Date(iso);
   const now = new Date();
@@ -1005,7 +1015,7 @@ function StarRating({ orderId, onRated }: { orderId: string; onRated: (stars: nu
 function CustomerOrdersPage() {
   const { customer } = useCustomer();
   const navigate = useNavigate();
-  const { setQuantity, clear } = useCartStore();
+  const { addLine, clear } = useCartStore();
   const [orders, setOrders] = React.useState<(Order & { vendorName: string; vendorSlug: string })[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
@@ -1034,7 +1044,10 @@ function CustomerOrdersPage() {
   function handleReorder(order: Order & { vendorSlug: string; vendorName: string }) {
     clear();
     for (const item of order.items) {
-      setQuantity(item.menuItemId, item.quantity);
+      addLine(
+        { menuItemId: item.menuItemId, variantId: item.variantId, addonIds: item.addonIds ?? [] },
+        item.quantity
+      );
     }
     setReorderToast(`${order.items.length} item${order.items.length !== 1 ? "s" : ""} added — check availability`);
     setTimeout(() => setReorderToast(""), 3500);
@@ -1076,7 +1089,7 @@ function CustomerOrdersPage() {
                   </div>
                   <StatusBadge status={order.status} />
                 </div>
-                <p className="order-items-list">{order.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</p>
+                <p className="order-items-list">{order.items.map(formatOrderLine).join(", ")}</p>
                 {order.scheduledFor ? (
                   <p className="scheduled-line">⏰ Pickup at <strong>{formatScheduledFor(order.scheduledFor)}</strong></p>
                 ) : null}
@@ -1315,12 +1328,14 @@ function AddressBook() {
 
 function MenuSection({
   menuItems,
-  quantities,
+  entries,
   setQuantity,
+  onCustomize,
 }: {
   menuItems: MenuItem[];
-  quantities: Record<string, number>;
+  entries: Record<string, import("./cartStore").CartEntry>;
   setQuantity: (id: string, qty: number) => void;
+  onCustomize: (item: MenuItem) => void;
 }) {
   const categories = React.useMemo(() => {
     const seen = new Set<string>();
@@ -1401,21 +1416,37 @@ function MenuSection({
             {items.map((item) => {
               const lowStock = typeof item.stockQuantity === "number" && item.stockQuantity <= 5;
               const stockCap = typeof item.stockQuantity === "number" ? item.stockQuantity : Infinity;
+              const hasOptions = (item.variants?.length ?? 0) > 0 || (item.addons?.length ?? 0) > 0;
+              const itemTotalQty = Object.values(entries).filter((e) => e.menuItemId === item.id).reduce((s, e) => s + e.quantity, 0);
+              const priceLabel = item.variants && item.variants.length > 0
+                ? `From ₹${Math.min(...item.variants.map((v) => v.price))}`
+                : `₹${item.price}`;
               return (
-                <article className={`menu-card${(quantities[item.id] ?? 0) > 0 ? " in-cart" : ""}`} key={item.id}>
+                <article className={`menu-card${itemTotalQty > 0 ? " in-cart" : ""}`} key={item.id}>
                   <img src={item.photoUrl} alt="" />
                   <div className="menu-card-body">
                     <div>
                       <h3>{item.name}</h3>
                       <p>{item.description}</p>
+                      {hasOptions ? <span className="customize-hint">Customizable</span> : null}
                       {lowStock ? <span className="low-stock-badge">Only {item.stockQuantity} left</span> : null}
                     </div>
                     <div className="menu-action">
-                      <strong>₹{item.price}</strong>
-                      <QuantityControl
-                        value={quantities[item.id] ?? 0}
-                        onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
-                      />
+                      <strong>{priceLabel}</strong>
+                      {hasOptions ? (
+                        <button
+                          type="button"
+                          className="qty-add-btn"
+                          onClick={() => onCustomize(item)}
+                        >
+                          {itemTotalQty > 0 ? `${itemTotalQty} · Add more` : "+ Add"}
+                        </button>
+                      ) : (
+                        <QuantityControl
+                          value={entries[item.id]?.quantity ?? 0}
+                          onChange={(quantity) => setQuantity(item.id, Math.min(quantity, stockCap))}
+                        />
+                      )}
                     </div>
                   </div>
                 </article>
@@ -1425,6 +1456,104 @@ function MenuSection({
         </div>
       ))}
     </section>
+  );
+}
+
+// ── Customization Sheet (variants + addons) ──────────────────────────────────
+
+function CustomizationSheet({
+  item,
+  onClose,
+  onAdd,
+}: {
+  item: MenuItem;
+  onClose: () => void;
+  onAdd: (variantId: string | undefined, addonIds: string[], quantity: number) => void;
+}) {
+  const variants = item.variants ?? [];
+  const addons = item.addons ?? [];
+  const [variantId, setVariantId] = React.useState<string>(variants[0]?.id ?? "");
+  const [addonIds, setAddonIds] = React.useState<string[]>([]);
+  const [quantity, setQuantity] = React.useState(1);
+
+  React.useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const variant = variants.find((v) => v.id === variantId);
+  const chosenAddons = addons.filter((a) => addonIds.includes(a.id));
+  const base = variant ? variant.price : item.price;
+  const unitPrice = base + chosenAddons.reduce((s, a) => s + a.price, 0);
+  const total = unitPrice * quantity;
+
+  function toggleAddon(id: string) {
+    setAddonIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  function submit() {
+    onAdd(variantId || undefined, addonIds, quantity);
+    onClose();
+  }
+
+  return (
+    <>
+      <div className="cart-sheet-backdrop" onClick={onClose} />
+      <aside className="cart-panel customize-sheet open">
+        <div className="cart-sheet-header">
+          <span className="cart-sheet-grip" aria-hidden="true" />
+          <button type="button" className="cart-sheet-close" aria-label="Close" onClick={onClose}>✕</button>
+        </div>
+        <h2>{item.name}</h2>
+        {item.description ? <p className="muted small" style={{ margin: 0 }}>{item.description}</p> : null}
+
+        {variants.length > 0 ? (
+          <div className="customize-group">
+            <h3 className="customize-group-h">Choose one</h3>
+            {variants.map((v) => (
+              <label key={v.id} className={`customize-option${variantId === v.id ? " selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="variant"
+                  checked={variantId === v.id}
+                  onChange={() => setVariantId(v.id)}
+                />
+                <span className="customize-option-name">{v.name}</span>
+                <span className="customize-option-price">₹{v.price}</span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+
+        {addons.length > 0 ? (
+          <div className="customize-group">
+            <h3 className="customize-group-h">Add-ons (optional)</h3>
+            {addons.map((a) => (
+              <label key={a.id} className={`customize-option${addonIds.includes(a.id) ? " selected" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={addonIds.includes(a.id)}
+                  onChange={() => toggleAddon(a.id)}
+                />
+                <span className="customize-option-name">{a.name}</span>
+                <span className="customize-option-price">+₹{a.price}</span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="customize-footer">
+          <div className="qty">
+            <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} aria-label="Decrease">−</button>
+            <span>{quantity}</span>
+            <button type="button" onClick={() => setQuantity((q) => q + 1)} aria-label="Increase">+</button>
+          </div>
+          <button type="button" className="customize-add" onClick={submit}>
+            Add · ₹{total}
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -1449,7 +1578,8 @@ function CustomerStorefront() {
   } | null>(null);
   const [error, setError] = React.useState("");
   const [cartSheetOpen, setCartSheetOpen] = React.useState(false);
-  const { quantities, setQuantity, clear } = useCartStore();
+  const [customizingItem, setCustomizingItem] = React.useState<MenuItem | null>(null);
+  const { entries, setQuantity, addLine, clear } = useCartStore();
 
   React.useEffect(() => {
     if (!cartSheetOpen) return;
@@ -1478,7 +1608,7 @@ function CustomerStorefront() {
     }
   }, [customer]);
 
-  const cartLines = buildCartLines(menuItems, quantities);
+  const cartLines = buildCartLines(menuItems, entries);
   const itemsTotal = cartLines.reduce((sum, line) => sum + line.lineTotal, 0);
   const deliveryFee = orderType === "delivery" ? ((vendor as { deliveryFeeFlat?: number })?.deliveryFeeFlat ?? 0) : 0;
   const total = itemsTotal + deliveryFee;
@@ -1531,7 +1661,12 @@ function CustomerStorefront() {
         deliveryAddress: addr,
         paymentMethod,
         scheduledFor: orderType === "pickup" && scheduledFor ? scheduledFor : undefined,
-        items: cartLines.map((line) => ({ menuItemId: line.item.id, quantity: line.quantity }))
+        items: cartLines.map((line) => ({
+          menuItemId: line.item.id,
+          quantity: line.quantity,
+          variantId: line.selection.variantId,
+          addonIds: line.selection.addonIds.length ? line.selection.addonIds : undefined
+        }))
       });
       if (paymentMethod === "online" && response.payment.provider === "razorpay" && response.payment.keyId && response.payment.orderId) {
         setPendingPayment({ order: response.order, payment: response.payment });
@@ -1628,7 +1763,7 @@ function CustomerStorefront() {
         <OrderConfirmation order={placedOrder} vendorName={(vendor as { name?: string }).name ?? "Shop"} />
       ) : (
         <main className="customer-grid">
-          <MenuSection menuItems={menuItems} quantities={quantities} setQuantity={setQuantity} />
+          <MenuSection menuItems={menuItems} entries={entries} setQuantity={setQuantity} onCustomize={setCustomizingItem} />
 
           <aside className={`cart-panel${cartSheetOpen ? " open" : ""}`}>
             <div className="cart-sheet-header">
@@ -1658,8 +1793,15 @@ function CustomerStorefront() {
             ) : (
               <div className="cart-lines">
                 {cartLines.map((line) => (
-                  <div className="cart-line" key={line.item.id}>
-                    <span>{line.item.name} x{line.quantity}</span>
+                  <div className="cart-line" key={line.key}>
+                    <div className="cart-line-info">
+                      <span className="cart-line-name">{line.item.name} ×{line.quantity}</span>
+                      {(line.variantName || line.addonNames.length > 0) ? (
+                        <span className="cart-line-options">
+                          {[line.variantName, ...line.addonNames].filter(Boolean).join(" · ")}
+                        </span>
+                      ) : null}
+                    </div>
                     <strong>₹{line.lineTotal}</strong>
                   </div>
                 ))}
@@ -1802,6 +1944,13 @@ function CustomerStorefront() {
       )}
       {!placedOrder && cartSheetOpen ? (
         <div className="cart-sheet-backdrop" onClick={() => setCartSheetOpen(false)} />
+      ) : null}
+      {customizingItem ? (
+        <CustomizationSheet
+          item={customizingItem}
+          onClose={() => setCustomizingItem(null)}
+          onAdd={(vId, aIds, q) => addLine({ menuItemId: customizingItem.id, variantId: vId, addonIds: aIds }, q)}
+        />
       ) : null}
       {!placedOrder && cartLines.length > 0 && !cartSheetOpen ? (
         <div className="cart-bar">
@@ -2318,7 +2467,19 @@ function VendorConsole() {
     operatingHours: defaultOperatingHours(),
     acceptWindowMinutes: "15"
   });
-  const [menuDraft, setMenuDraft] = React.useState({
+  type MenuDraft = {
+    id: string;
+    name: string;
+    description: string;
+    price: string;
+    photoUrl: string;
+    category: string;
+    isAvailable: boolean;
+    stockQuantity: string;
+    variants: { name: string; price: string }[];
+    addons: { name: string; price: string }[];
+  };
+  const [menuDraft, setMenuDraft] = React.useState<MenuDraft>({
     id: "",
     name: "",
     description: "",
@@ -2326,7 +2487,9 @@ function VendorConsole() {
     photoUrl: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80",
     category: "Snacks",
     isAvailable: true,
-    stockQuantity: ""
+    stockQuantity: "",
+    variants: [],
+    addons: []
   });
   const [menuPhotoFile, setMenuPhotoFile] = React.useState<File | null>(null);
   const [issuedToken, setIssuedToken] = React.useState("");
@@ -2425,7 +2588,15 @@ function VendorConsole() {
       photoUrl: menuDraft.photoUrl,
       category: menuDraft.category,
       isAvailable: menuDraft.isAvailable,
-      stockQuantity: menuDraft.stockQuantity.trim() === "" ? undefined : Number(menuDraft.stockQuantity)
+      stockQuantity: menuDraft.stockQuantity.trim() === "" ? undefined : Number(menuDraft.stockQuantity),
+      variants: menuDraft.variants
+        .map((v) => ({ name: v.name.trim(), price: Number(v.price) }))
+        .filter((v) => v.name && !Number.isNaN(v.price))
+        .map((v) => ({ ...v, id: "" })),
+      addons: menuDraft.addons
+        .map((a) => ({ name: a.name.trim(), price: Number(a.price) }))
+        .filter((a) => a.name && !Number.isNaN(a.price))
+        .map((a) => ({ ...a, id: "" }))
     };
     try {
       if (menuDraft.id) {
@@ -2437,7 +2608,7 @@ function VendorConsole() {
         if (menuPhotoFile) response = await uploadMenuItemPhoto(response.menuItem.id, menuPhotoFile);
         setMenu((current) => [response.menuItem, ...current]);
       }
-      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true, stockQuantity: "" });
+      setMenuDraft({ id: "", name: "", description: "", price: "50", photoUrl: menuDraft.photoUrl, category: "Snacks", isAvailable: true, stockQuantity: "", variants: [], addons: [] });
       setMenuPhotoFile(null);
     } catch (menuError) {
       setError(messageFromError(menuError));
@@ -2464,7 +2635,9 @@ function VendorConsole() {
       photoUrl: item.photoUrl,
       category: item.category,
       isAvailable: item.isAvailable,
-      stockQuantity: typeof item.stockQuantity === "number" ? String(item.stockQuantity) : ""
+      stockQuantity: typeof item.stockQuantity === "number" ? String(item.stockQuantity) : "",
+      variants: (item.variants ?? []).map((v) => ({ name: v.name, price: String(v.price) })),
+      addons: (item.addons ?? []).map((a) => ({ name: a.name, price: String(a.price) }))
     });
   }
 
@@ -2886,7 +3059,7 @@ function VendorConsole() {
                     {order.paymentMethod === "cash" ? <span className="cash-tag">Cash</span> : null}
                   </div>
                 </div>
-                <p>{order.items.map((item) => `${item.name} x${item.quantity}`).join(", ")}</p>
+                <p>{order.items.map(formatOrderLine).join(", ")}</p>
                 {order.deliveryAddress ? (
                   <p className="muted small">{order.deliveryAddress.line1}, {order.deliveryAddress.city}</p>
                 ) : null}
@@ -3085,6 +3258,63 @@ function VendorConsole() {
                 <input type="checkbox" checked={menuDraft.isAvailable} onChange={(event) => setMenuDraft((draft) => ({ ...draft, isAvailable: event.target.checked }))} />
                 Available
               </label>
+
+              <fieldset className="option-editor">
+                <legend>Size options <span className="muted small">(customer picks one)</span></legend>
+                {menuDraft.variants.map((v, idx) => (
+                  <div className="option-row" key={`var-${idx}`}>
+                    <input
+                      placeholder="Name (e.g. Small)"
+                      value={v.name}
+                      onChange={(e) => setMenuDraft((d) => ({ ...d, variants: d.variants.map((x, i) => i === idx ? { ...x, name: e.target.value } : x) }))}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="Price"
+                      value={v.price}
+                      onChange={(e) => setMenuDraft((d) => ({ ...d, variants: d.variants.map((x, i) => i === idx ? { ...x, price: e.target.value } : x) }))}
+                    />
+                    <button type="button" className="option-remove" onClick={() => setMenuDraft((d) => ({ ...d, variants: d.variants.filter((_, i) => i !== idx) }))}>✕</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="quiet-button option-add"
+                  onClick={() => setMenuDraft((d) => ({ ...d, variants: [...d.variants, { name: "", price: "" }] }))}
+                >
+                  + Add size option
+                </button>
+              </fieldset>
+
+              <fieldset className="option-editor">
+                <legend>Add-ons <span className="muted small">(customer picks any)</span></legend>
+                {menuDraft.addons.map((a, idx) => (
+                  <div className="option-row" key={`add-${idx}`}>
+                    <input
+                      placeholder="Name (e.g. Extra cheese)"
+                      value={a.name}
+                      onChange={(e) => setMenuDraft((d) => ({ ...d, addons: d.addons.map((x, i) => i === idx ? { ...x, name: e.target.value } : x) }))}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="+₹"
+                      value={a.price}
+                      onChange={(e) => setMenuDraft((d) => ({ ...d, addons: d.addons.map((x, i) => i === idx ? { ...x, price: e.target.value } : x) }))}
+                    />
+                    <button type="button" className="option-remove" onClick={() => setMenuDraft((d) => ({ ...d, addons: d.addons.filter((_, i) => i !== idx) }))}>✕</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="quiet-button option-add"
+                  onClick={() => setMenuDraft((d) => ({ ...d, addons: [...d.addons, { name: "", price: "" }] }))}
+                >
+                  + Add add-on
+                </button>
+              </fieldset>
+
               <button disabled={!isLoggedIn}>{menuDraft.id ? "Update item" : "Add item"}</button>
             </form>
             {menu.map((item) => {
