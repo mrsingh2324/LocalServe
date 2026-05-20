@@ -298,6 +298,7 @@ const createOrderBodySchema = z.object({
     pincode: z.string().min(4).max(10)
   }).optional(),
   paymentMethod: z.enum(["online", "cash"]).default("online"),
+  scheduledFor: z.string().datetime().optional(),
   items: z.array(z.object({ menuItemId: z.string(), quantity: z.number().int().positive() })).min(1)
 });
 const menuItemBodySchema = z.object({
@@ -869,7 +870,7 @@ async function runOrderMaintenance() {
       io.to(`vendor:${order.vendorId}`).emit("order_updated", cancelled);
       io.to(`order:${order.id}`).emit("order_updated", cancelled);
       changed = true;
-    } else if (order.status === "CONFIRMED") {
+    } else if (order.status === "CONFIRMED" && !order.scheduledFor) {
       const vendor = getVendorById(order.vendorId);
       const windowMinutes = vendor?.acceptWindowMinutes ?? 15;
       if (new Date(order.createdAt).getTime() < now - windowMinutes * 60 * 1000) {
@@ -1009,6 +1010,7 @@ async function loadState() {
           customerId?: string; status: string; orderType?: string; deliveryAddress?: DeliveryAddress;
           deliveryFee?: number; paymentMethod?: string; items: unknown; totalAmount: number;
           paymentId?: string; paymentOrderId?: string; createdAt: Date; readyAt?: Date;
+          scheduledFor?: Date; rating?: number;
         };
         orders.set(String(o._id), {
           id: String(o._id),
@@ -1027,7 +1029,9 @@ async function loadState() {
           paymentId: o.paymentId ?? undefined,
           paymentOrderId: o.paymentOrderId ?? undefined,
           createdAt: o.createdAt.toISOString(),
-          readyAt: o.readyAt?.toISOString()
+          readyAt: o.readyAt?.toISOString(),
+          scheduledFor: o.scheduledFor?.toISOString(),
+          rating: o.rating
         });
       }
       notifications.clear();
@@ -1118,7 +1122,7 @@ async function persistState() {
     for (const order of orders.values()) {
       await OrderModel.updateOne(
         { _id: order.id },
-        { $set: { ...order, createdAt: new Date(order.createdAt), readyAt: order.readyAt ? new Date(order.readyAt) : undefined } },
+        { $set: { ...order, createdAt: new Date(order.createdAt), readyAt: order.readyAt ? new Date(order.readyAt) : undefined, scheduledFor: order.scheduledFor ? new Date(order.scheduledFor) : undefined } },
         { upsert: true }
       );
     }
@@ -1775,7 +1779,8 @@ app.post("/orders", optionalCustomer, asyncHandler(async (req, res) => {
     items: lines,
     totalAmount,
     paymentId: isCash ? `cash_${crypto.randomBytes(6).toString("hex")}` : (razorpayClient ? undefined : `pay_test_${crypto.randomBytes(6).toString("hex")}`),
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    scheduledFor: body.scheduledFor
   };
 
   let razorpayOrder: { id: string; amount: number; currency: string } | undefined;

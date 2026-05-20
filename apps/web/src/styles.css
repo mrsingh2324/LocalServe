@@ -2386,6 +2386,47 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* ── Scheduled Pickup ─────────────────────────────────────────────────────── */
+
+.pickup-time-label select {
+  font-weight: 600;
+}
+
+.scheduled-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--r-full);
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.scheduled-line {
+  font-size: var(--fs-sm);
+  color: #1e40af;
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  margin: 8px 0 0;
+}
+
+.scheduled-callout {
+  font-size: var(--fs-sm);
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--r-md);
+  padding: 10px 16px;
+  margin: 12px 0 4px;
+  display: inline-block;
+}
+
 /* ── Vendor Analytics ─────────────────────────────────────────────────────── */
 
 .analytics-panel .section-head span {

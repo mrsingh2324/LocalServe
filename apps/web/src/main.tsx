@@ -174,6 +174,43 @@ function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
+function formatScheduledFor(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+  if (sameDay) return `Today, ${time}`;
+  const date = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+  return `${date}, ${time}`;
+}
+
+// Build the next 6 hours of 30-min pickup slots, constrained to operating hours (IST).
+function buildPickupSlots(operatingHours?: DayHours[]): { value: string; label: string }[] {
+  const slots: { value: string; label: string }[] = [];
+  const start = new Date(Date.now() + 30 * 60 * 1000);
+  const m = start.getMinutes();
+  if (m % 30 !== 0) start.setMinutes(m + (30 - m % 30), 0, 0);
+  else start.setSeconds(0, 0);
+
+  for (let i = 0; i < 12; i++) {
+    const slot = new Date(start.getTime() + i * 30 * 60 * 1000);
+    if (operatingHours && operatingHours.length === 7) {
+      const ist = new Date(slot.getTime() + 5.5 * 60 * 60 * 1000);
+      const day = operatingHours[ist.getUTCDay()];
+      if (day.closed) continue;
+      const slotMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      const [oh, om] = day.open.split(":").map(Number);
+      const [ch, cm] = day.close.split(":").map(Number);
+      if (slotMin < oh * 60 + om || slotMin > ch * 60 + cm) continue;
+    }
+    slots.push({
+      value: slot.toISOString(),
+      label: slot.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })
+    });
+  }
+  return slots;
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -1040,6 +1077,9 @@ function CustomerOrdersPage() {
                   <StatusBadge status={order.status} />
                 </div>
                 <p className="order-items-list">{order.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</p>
+                {order.scheduledFor ? (
+                  <p className="scheduled-line">⏰ Pickup at <strong>{formatScheduledFor(order.scheduledFor)}</strong></p>
+                ) : null}
                 {order.status === "COLLECTED" && !order.rating ? (
                   <StarRating
                     orderId={order.id}
@@ -1398,6 +1438,7 @@ function CustomerStorefront() {
   const [phone, setPhone] = React.useState(customer?.phone ?? "");
   const [orderType, setOrderType] = React.useState<"pickup" | "delivery">("pickup");
   const [paymentMethod, setPaymentMethod] = React.useState<"online" | "cash">("online");
+  const [scheduledFor, setScheduledFor] = React.useState<string>("");
   const [deliveryAddr, setDeliveryAddr] = React.useState({ line1: "", city: "", pincode: "" });
   const [selectedSavedAddr, setSelectedSavedAddr] = React.useState<string>("");
   const [isPaying, setIsPaying] = React.useState(false);
@@ -1489,6 +1530,7 @@ function CustomerStorefront() {
         orderType,
         deliveryAddress: addr,
         paymentMethod,
+        scheduledFor: orderType === "pickup" && scheduledFor ? scheduledFor : undefined,
         items: cartLines.map((line) => ({ menuItemId: line.item.id, quantity: line.quantity }))
       });
       if (paymentMethod === "online" && response.payment.provider === "razorpay" && response.payment.keyId && response.payment.orderId) {
@@ -1691,6 +1733,18 @@ function CustomerStorefront() {
               </>
             ) : null}
 
+            {orderType === "pickup" ? (
+              <label className="pickup-time-label">
+                Pickup time
+                <select value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)}>
+                  <option value="">As soon as possible</option>
+                  {buildPickupSlots((vendor as { operatingHours?: DayHours[] })?.operatingHours).map((slot) => (
+                    <option key={slot.value} value={slot.value}>{slot.label}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             {cashEnabled ? (
               <div className="payment-method-toggle">
                 <button
@@ -1809,6 +1863,9 @@ function OrderConfirmation({ order, vendorName }: { order: Order; vendorName: st
       <p className="eyebrow">{isCash ? "Order placed" : "Payment confirmed"}</p>
       <h2>Order confirmed</h2>
       <div className="order-code">{order.orderCode}</div>
+      {order.scheduledFor ? (
+        <p className="scheduled-callout">⏰ Pickup at <strong>{formatScheduledFor(order.scheduledFor)}</strong></p>
+      ) : null}
       {isCash ? (
         <p>
           Show this code at <strong>{vendorName}</strong> and pay{" "}
@@ -1892,6 +1949,9 @@ function OrderStatusPage() {
         <p className="eyebrow">{vendor.name}</p>
         <h1>Order #{order.orderCode}</h1>
         <StatusBadge status={order.status} />
+        {order.scheduledFor ? (
+          <p className="scheduled-callout">⏰ Pickup scheduled for <strong>{formatScheduledFor(order.scheduledFor)}</strong></p>
+        ) : null}
         <div className="timeline">
           <TimelineRow active done label="Order received" time={new Date(order.createdAt).toLocaleTimeString()} />
           <TimelineRow active={["PREPARING", "READY", "COLLECTED"].includes(order.status)} done={["PREPARING", "READY", "COLLECTED"].includes(order.status)} label="Preparing" />
@@ -2803,7 +2863,7 @@ function VendorConsole() {
             ) : null}
             {orders.map((order) => {
               const windowMinutes = vendor?.acceptWindowMinutes ?? 15;
-              const showCountdown = order.status === "CONFIRMED";
+              const showCountdown = order.status === "CONFIRMED" && !order.scheduledFor;
               return (
               <article className="order-card" key={order.id}>
                 <div className="order-card-top">
@@ -2821,6 +2881,7 @@ function VendorConsole() {
                         }
                       />
                     )}
+                    {order.scheduledFor ? <span className="scheduled-tag">⏰ {formatScheduledFor(order.scheduledFor)}</span> : null}
                     {order.orderType === "delivery" ? <span className="delivery-tag">Delivery</span> : null}
                     {order.paymentMethod === "cash" ? <span className="cash-tag">Cash</span> : null}
                   </div>

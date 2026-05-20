@@ -274,6 +274,7 @@ export function createOrder(payload: {
   orderType: "pickup" | "delivery";
   deliveryAddress?: { line1: string; city: string; pincode: string };
   paymentMethod: "online" | "cash";
+  scheduledFor?: string;
   items: { menuItemId: string; quantity: number }[];
 }) {
   return request<{

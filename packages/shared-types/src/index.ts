@@ -128,6 +128,7 @@ export const orderSchema = z.object({
   paymentOrderId: z.string().optional(),
   createdAt: z.string(),
   readyAt: z.string().optional(),
+  scheduledFor: z.string().optional(),
   rating: z.number().int().min(1).max(5).optional()
 });
 
