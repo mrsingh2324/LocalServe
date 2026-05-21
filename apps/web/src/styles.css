@@ -2386,6 +2386,21 @@ textarea:focus {
   color: var(--muted);
 }
 
+.hero-wait {
+  display: inline-block;
+  margin-top: 8px !important;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--r-full);
+  padding: 4px 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 /* ── Favorites + Recent Rails ─────────────────────────────────────────────── */
 
 .shop-fav {

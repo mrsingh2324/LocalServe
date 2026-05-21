@@ -802,6 +802,38 @@ function vendorOrders(vendorId: string) {
   return [...orders.values()].filter((order) => order.vendorId === vendorId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+const DEFAULT_PREP_MINUTES = 10;
+const PREP_BUFFER_MINUTES = 3;
+const WAIT_MAX_MINUTES = 60;
+
+function computeLiveStats(vendorId: string) {
+  const all = vendorOrders(vendorId);
+
+  // Average prep time from the last 20 collected, non-scheduled orders with a readyAt timestamp.
+  const recentReady = all
+    .filter((o) => o.status === "COLLECTED" && o.readyAt && !o.scheduledFor)
+    .slice(0, 20);
+  let avgPrepMinutes = DEFAULT_PREP_MINUTES;
+  if (recentReady.length > 0) {
+    const total = recentReady.reduce((sum, o) => {
+      const created = new Date(o.createdAt).getTime();
+      const ready = new Date(o.readyAt as string).getTime();
+      return sum + Math.max(0, (ready - created) / 60000);
+    }, 0);
+    avgPrepMinutes = Math.max(2, Math.round(total / recentReady.length));
+  }
+
+  // Orders currently ahead in the queue — immediate (not scheduled) orders being worked on.
+  const ordersAhead = all.filter((o) =>
+    !o.scheduledFor && (o.status === "PENDING" || o.status === "CONFIRMED" || o.status === "PREPARING")
+  ).length;
+
+  const raw = ordersAhead * avgPrepMinutes + PREP_BUFFER_MINUTES;
+  const estimatedWaitMinutes = Math.min(WAIT_MAX_MINUTES, Math.max(PREP_BUFFER_MINUTES, raw));
+
+  return { ordersAhead, estimatedWaitMinutes, avgPrepMinutes };
+}
+
 function customerOrders(customerId: string) {
   return [...orders.values()].filter((order) => order.customerId === customerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -1764,7 +1796,11 @@ app.get("/v/:vendorSlug", asyncHandler(async (req, res) => {
     return;
   }
   const vendorResponse = await buildVendorResponse(vendor);
-  res.json({ vendor: publicStorefrontVendor(vendorResponse), menuItems: vendorMenu(vendor.id, true) });
+  res.json({
+    vendor: publicStorefrontVendor(vendorResponse),
+    menuItems: vendorMenu(vendor.id, true),
+    liveStats: computeLiveStats(vendor.id)
+  });
 }));
 
 // ── Orders ────────────────────────────────────────────────────────────────────

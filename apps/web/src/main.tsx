@@ -1647,6 +1647,7 @@ function CustomerStorefront() {
   const { customer } = useCustomer();
   const [vendor, setVendor] = React.useState<(ShopSummary & { qrUrl?: string; storefrontUrl?: string }) | null>(null);
   const [menuItems, setMenuItems] = React.useState<MenuItem[]>([]);
+  const [liveStats, setLiveStats] = React.useState<{ ordersAhead: number; estimatedWaitMinutes: number; avgPrepMinutes: number } | null>(null);
   const [storefrontLoading, setStorefrontLoading] = React.useState(true);
   const [email, setEmail] = React.useState(customer?.email ?? "");
   const [phone, setPhone] = React.useState(customer?.phone ?? "");
@@ -1680,6 +1681,7 @@ function CustomerStorefront() {
       .then((data) => {
         setVendor(data.vendor as unknown as typeof vendor);
         setMenuItems(data.menuItems);
+        setLiveStats(data.liveStats);
         if (!(data.vendor.cashEnabled ?? true)) setPaymentMethod("online");
       })
       .catch((loadError) => setError(messageFromError(loadError)))
@@ -1839,6 +1841,13 @@ function CustomerStorefront() {
             <p className="hero-rating">
               ★ {((vendor as { ratingAvg: number }).ratingAvg).toFixed(1)}
               <span className="hero-rating-count"> ({(vendor as { ratingCount?: number }).ratingCount} review{(vendor as { ratingCount?: number }).ratingCount !== 1 ? "s" : ""})</span>
+            </p>
+          ) : null}
+          {liveStats && (vendor as { isOpen?: boolean }).isOpen ? (
+            <p className="hero-wait">
+              {liveStats.ordersAhead === 0
+                ? `⚡ No wait — ready in ~${liveStats.estimatedWaitMinutes} min`
+                : `⏱ Ready in ~${liveStats.estimatedWaitMinutes} min · ${liveStats.ordersAhead} order${liveStats.ordersAhead !== 1 ? "s" : ""} ahead`}
             </p>
           ) : null}
         </div>
